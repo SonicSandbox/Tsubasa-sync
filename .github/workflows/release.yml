@@ -1,0 +1,126 @@
+name: release
+
+# ===========================================================================
+# Publishes to PyPI on a version tag, via Trusted Publishing.
+# ===========================================================================
+#
+# ⭐ NO API TOKEN AND NO SECRET ANYWHERE. PyPI authenticates this workflow
+# directly through GitHub's OIDC provider, which is why `id-token: write`
+# below is the only unusual permission. `GITHUB-SETUP.md` says *add no
+# secrets, and the absence is a property worth keeping* — this is how that
+# stays true while still publishing.
+#
+# ⚠ THE PyPI DISTRIBUTION NAME IS `tsubasa-sync`, THE IMPORT NAME IS
+# `tsubasa`. `tsubasa` was already taken on PyPI by an unrelated, actively
+# maintained project. The import name may NOT be changed to match: RUNBOOK 3b
+# and `05-interface.md` make it a compatibility promise that hato pins.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and check the artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      # =====================================================================
+      # 🚨 THE DATA FILES FAIL SILENTLY — CHECK BEFORE PUBLISHING, NOT AFTER
+      # =====================================================================
+      # `naming/alias.py::load()` fails OPEN by design, so a release missing
+      # its alias table installs cleanly and is quietly far worse: measured,
+      # settled-by-name falls 80.0% -> 51.4% with nothing raising.
+      # ⛔ A bad wheel on PyPI cannot be replaced — that version number is
+      # burned forever. This check is the last moment it is cheap to catch.
+      - name: The alias table must be inside the artifacts
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, sys, tarfile, zipfile
+
+          need = "tsubasa/data/aliases.tsv.gz"
+          MIN = 1_000_000
+
+          whl = glob.glob("dist/*.whl")[0]
+          z = zipfile.ZipFile(whl)
+          if need not in z.namelist():
+              sys.exit("WHEEL IS MISSING %s — package-data is not wired" % need)
+          size = z.getinfo(need).file_size
+          if size < MIN:
+              sys.exit("wheel's alias table is %d bytes — truncated" % size)
+          print("wheel  : %s carries the table, %d bytes" % (whl, size))
+
+          sdist = glob.glob("dist/*.tar.gz")[0]
+          with tarfile.open(sdist) as t:
+              hit = [m for m in t.getmembers() if m.name.endswith(need)]
+          if not hit:
+              sys.exit("SDIST IS MISSING %s — GPL requires usable source" % need)
+          print("sdist  : %s carries the table, %d bytes" % (sdist, hit[0].size))
+          PY
+
+      - name: Install the wheel and prove the table LOADS
+        run: |
+          set -euo pipefail
+          python -m pip install dist/*.whl
+          # ⛔ OUTSIDE the source tree. Running from the checkout would find
+          # the repository's own data through `__file__` and prove nothing
+          # about what is about to be published.
+          mkdir -p /tmp/elsewhere && cd /tmp/elsewhere
+          python - <<'PY'
+          import tsubasa
+          from tsubasa.naming import alias
+          n = len(alias.load())
+          print("version:", tsubasa.__version__, "| alias entries:", n)
+          assert n >= 100000, (
+              "the built wheel loaded %d alias entries — the data did not "
+              "ship, and NOTHING raises when that happens" % n)
+          PY
+
+      # ⚠ THE TAG MUST MATCH THE VERSION IN THE PACKAGE. Publishing v0.2.0
+      # from a tree that says 0.1.0 produces a release nobody can reason
+      # about, and `10-deployment.md` rests a proof on *the live artifact's
+      # version equals the local one*.
+      - name: Tag and package version must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import tsubasa; print(tsubasa.__version__)")
+          echo "tag=$TAG package=$PKG"
+          test "$TAG" = "$PKG" || {
+            echo "tag $TAG does not match package version $PKG"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # ⭐ A dedicated environment, so publishing can be gated by a required
+    # reviewer in repository settings if this ever has other maintainers.
+    environment: pypi
+    permissions:
+      id-token: write        # ⛔ REQUIRED for Trusted Publishing. Nothing else.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
