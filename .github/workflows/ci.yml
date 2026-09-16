@@ -48,9 +48,43 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python run_tests.py
 
-      # ⭐ THE FAILING OUTPUT IS AN ARTEFACT, not something to scroll for. A
-      # full run once reported one failure with its name scrolled off, costing
-      # a second eight-minute run to learn a name the first run already had.
+      # =====================================================================
+      # 🚨 PRINT THE FAILING SUITE'S OUTPUT INLINE, NOT ONLY AS AN ARTEFACT
+      # =====================================================================
+      # `run_tests.py` writes every failing suite's FULL output to disk and
+      # the step summary shows only `exit code 1`. Uploading that as an
+      # artefact was not enough: reading it needs an authenticated download,
+      # so the one person who could see the failure was the one person the
+      # workflow exists to save the trouble.
+      # ⭐ `doctrine/evidence`: the instrument has to hand back the finding,
+      # not store it somewhere the finding cannot be reached from.
+      - name: Say what actually failed
+        if: failure()
+        shell: bash
+        run: |
+          echo "=============================================="
+          echo " the runner's own record of the failing suites"
+          echo "=============================================="
+          for f in _runs/*/*.txt; do
+            [ -f "$f" ] || continue
+            echo ""
+            echo "----- $f -----"
+            tail -n 60 "$f"
+          done
+          echo ""
+          echo "===== environment, for the differences that matter ====="
+          python -c "import sys,platform;print('python',sys.version.split()[0],platform.platform())"
+          python -c "
+          for m in ('numpy','anitopy','guessit','send2trash','tkinter'):
+              try:
+                  __import__(m); print('  present', m)
+              except Exception as e:
+                  print('  ABSENT ', m, '->', type(e).__name__)
+          "
+
+      # ⭐ AND STILL KEEP IT AS AN ARTEFACT. A full run once reported one
+      # failure with its name scrolled off, costing a second eight-minute run
+      # to learn a name the first run already had.
       - name: Keep the run log
         if: always()
         uses: actions/upload-artifact@v4
