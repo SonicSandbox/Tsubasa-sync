@@ -1,0 +1,154 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# ⛔ READ-ONLY. `GITHUB-SETUP.md`: the CI only runs tests, it needs no secret,
+# and the absence of one is a property worth keeping.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =========================================================================
+  # RUNBOOK 0b — the three-OS matrix
+  # =========================================================================
+  tests:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[parsing,trash]" pytest
+
+      # ⚠ UTF-8 EVERYWHERE. This project's corpus is Japanese and a runner
+      # whose console defaults to an ANSI codepage raises UnicodeEncodeError
+      # on a filename rather than on anything that is actually wrong.
+      - name: Run the suite
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python run_tests.py
+
+      # ⭐ THE FAILING OUTPUT IS AN ARTEFACT, not something to scroll for. A
+      # full run once reported one failure with its name scrolled off, costing
+      # a second eight-minute run to learn a name the first run already had.
+      - name: Keep the run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-log-${{ matrix.os }}-py${{ matrix.python }}
+          path: _runs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # =========================================================================
+  # 🚨 IS THE WHEEL THE THING WE BUILT?
+  # =========================================================================
+  #
+  # `naming/alias.py::load()` fails OPEN by design — a missing table returns
+  # an empty one and raises nothing. So a wheel built without package-data
+  # installs cleanly, imports cleanly, runs cleanly, and is quietly far worse
+  # at the one thing that makes cross-script pairing work.
+  #
+  # ⛔ MEASURED: settled-by-name falls 80.0% → 51.4% with the table absent.
+  # 28.6 points of pairing quality, with no error anywhere.
+  #
+  # ⭐ So the wheel is opened and looked inside, in a clean environment that
+  # never sees the source tree. A check that ran from a checkout would pass
+  # on the repository's copy of the file and prove nothing about the artefact.
+  wheel:
+    name: wheel contains its data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Look inside the wheel
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl)
+          echo "built: $WHEEL"
+          python - "$WHEEL" <<'PY'
+          import sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          need = ["tsubasa/data/aliases.tsv.gz", "tsubasa/data/decoration.json"]
+          missing = [n for n in need if n not in names]
+          if missing:
+              sys.exit("MISSING FROM THE WHEEL: %s\n"
+                       "package-data is not wired. The install would work and "
+                       "be measurably worse, silently." % missing)
+          info = zipfile.ZipFile(sys.argv[1]).getinfo("tsubasa/data/aliases.tsv.gz")
+          if info.file_size < 1_000_000:
+              sys.exit("alias table in the wheel is %d bytes — truncated"
+                       % info.file_size)
+          print("alias table present: %d bytes" % info.file_size)
+          PY
+
+      # ⛔ INSTALLED FROM THE WHEEL, IN A DIRECTORY THAT IS NOT THE SOURCE
+      # TREE. Running from the checkout would find the repository's own data
+      # files through `__file__` and tell us nothing about what shipped.
+      - name: Install the wheel and prove the table LOADS
+        run: |
+          set -euo pipefail
+          python -m pip install dist/*.whl
+          mkdir -p /tmp/elsewhere && cd /tmp/elsewhere
+          python - <<'PY'
+          import tsubasa
+          from tsubasa.naming import alias
+          table = alias.load()
+          print("version:", tsubasa.__version__)
+          print("alias entries:", len(table))
+          assert len(table) >= 100000, (
+              "the installed wheel loaded %d alias entries — the data file did "
+              "not ship, and NOTHING raises when that happens" % len(table))
+          assert callable(tsubasa.scan) and callable(tsubasa.sync)
+          PY
+
+  # =========================================================================
+  # The licence is a file people rely on, so it is checked like one.
+  # =========================================================================
+  licence:
+    name: licence is the real text
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: LICENSE must be the canonical GPL-3.0
+        run: |
+          set -euo pipefail
+          test -s LICENSE || { echo "LICENSE is missing or empty"; exit 1; }
+          grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE
+          grep -q "Version 3, 29 June 2007" LICENSE
+          grep -q "TERMS AND CONDITIONS" LICENSE
+          # ⚠ A placeholder explaining that the licence is missing is a
+          # failure that looks like success from every direction but opening
+          # it. It was a real state of this repository for one afternoon.
+          if grep -qi "PLACEHOLDER" LICENSE; then
+            echo "LICENSE is still the placeholder"; exit 1
+          fi
+          echo "LICENSE ok: $(wc -c < LICENSE) bytes"
