@@ -1,0 +1,10 @@
+{
+ "//": "RUNBOOK A2b+ -- the TITLE gate. ⭐ CONTAMINATED is the gate: the parser extracted an episode number and left it in the title, which is the defect `parsergate` structurally cannot see because it scores the UNION and another parser rescues the episode. Re-record with: python -m tsubasa.dev titlegate --all --baseline. ⚠ A CEILING, never a target -- the suite fails when a number RISES, and a fall is re-recorded deliberately. ⛔ SPLIT is a trend line and is not gated.",
+ "recorded": "2026-09-09T04:33:17Z",
+ "rows": 203591,
+ "sampled": false,
+ "contaminatedPct": 0.15,
+ "emptyPct": 1.19,
+ "offModalPct": 13.77,
+ "groups": 8650
+}

@@ -1,0 +1,40 @@
+# ===========================================================================
+# 🚨 LINE ENDINGS ARE NOT COSMETIC IN THIS PROJECT
+# ===========================================================================
+#
+# tsubasa promises a BYTE-EXACT round-trip: a subtitle read and written with a
+# zero shift must come back identical, and `LEDGER.md` records a WebVTT bug
+# caused by exactly this — `text.find("\n\n")` does not match `\r\n\r\n`, and
+# **66% of the real corpus is CRLF**.
+#
+# Git's default on Windows rewrites line endings on checkout. If that reached
+# a test fixture or a format module, the round-trip suite would pass on one
+# platform and fail on another for a reason no assertion names.
+#
+# ⛔ So: normalise SOURCE to LF in the repository, and mark the data files
+# binary so nothing touches them at all.
+
+# Source and docs: LF in the repo, native in the working tree is fine.
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+# ⛔ NEVER TOUCHED — binary, or byte-exactness is the whole point
+# ---------------------------------------------------------------------------
+*.gz        binary
+*.png       binary
+*.onnx      binary
+
+# Subtitle files carry their ORIGINAL line endings deliberately. If a fixture
+# is ever committed, git must not normalise it — the file's own bytes are the
+# thing under test.
+*.srt       -text
+*.ass       -text
+*.ssa       -text
+*.vtt       -text
+*.sub       -text
+*.idx       -text
+
+# ---------------------------------------------------------------------------
+# GitHub language statistics — this is a Python project, not a docs project
+# ---------------------------------------------------------------------------
+spec/*.md   linguist-documentation

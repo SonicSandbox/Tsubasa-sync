@@ -1,0 +1,190 @@
+{
+  "broadcast_cut": {
+    "nanakoraws.atx.cut.srt": {
+      "dropped_in_gap": 1,
+      "outcome": "CONFIDENT",
+      "segments": [
+        [
+          222.4,
+          0.407
+        ],
+        [
+          null,
+          -9.7795
+        ]
+      ],
+      "source_untouched": true,
+      "undetermined_spans": [
+        [
+          222.4,
+          336.34
+        ]
+      ]
+    },
+    "shincaps.atx.cut.srt": {
+      "dropped_in_gap": 1,
+      "outcome": "CONFIDENT",
+      "segments": [
+        [
+          222.4,
+          -32.831
+        ],
+        [
+          null,
+          -43.0195
+        ]
+      ],
+      "source_untouched": true,
+      "undetermined_spans": [
+        [
+          222.4,
+          336.34
+        ]
+      ]
+    }
+  },
+  "keep_all": {
+    "distinct_outputs": 3,
+    "library_untouched": true,
+    "mirrored": true,
+    "nothing_superseded": true,
+    "out_folders": [
+      "Sintel",
+      "Yomi no Tsugai"
+    ],
+    "trash_is_empty": true
+  },
+  "one_folder": {
+    "counts": {
+      "confident": 3,
+      "errored": 0,
+      "failed": 0,
+      "refused": 0,
+      "written": 3
+    },
+    "dry_changed_the_tree": false,
+    "dry_run_left_every_source_untouched": true,
+    "everything_that_left_is_recoverable": true,
+    "offsets": {
+      "Sintel - 01.en.srt": 0.0,
+      "[SubsPlease] Yomi no Tsugai - 18 (1080p) [DD1CA4BC].ja.cc.srt": -1.0295,
+      "[SubsPlease] Yomi no Tsugai - 18 (1080p) [DD1CA4BC].srt": -32.831
+    },
+    "sources_overwritten_in_place": [],
+    "summary": "3 synced"
+  },
+  "out_dir": {
+    "library_untouched": true,
+    "mirrored": true
+  },
+  "second_run": {
+    "converged_to_one_subtitle": 4,
+    "everything_that_left_is_recoverable": true,
+    "overwritten_in_place": [],
+    "taken_by_the_first_run": [
+      "Yomi no Tsugai/[NanakoRaws] Yomi no Tsugai S01E18 (AT-X TV 1080p HEVC AAC).srt",
+      "Yomi no Tsugai/黄泉のツガイ.S01E18.WEBRip.ABEMA.ja[cc].srt"
+    ],
+    "taken_by_the_second_run": [
+      "Yomi no Tsugai/黄泉のツガイ.S01E18.風神と雷神.WEBRip.Netflix.ja[cc].srt"
+    ],
+    "third_run_changed_nothing": true
+  },
+  "two_folders": {
+    "counts": {
+      "confident": 2,
+      "errored": 0,
+      "failed": 0,
+      "refused": 0,
+      "written": 2
+    },
+    "downloads_untouched": true,
+    "every_output_is_beside_its_video": true,
+    "written": 2
+  },
+  "two_languages": {
+    "bracketed": {
+      "both_languages_survived": true,
+      "survival": {
+        "gone": [],
+        "intact": [
+          "Show/Show - 18.en[cc].srt",
+          "Show/Show - 18.ja[cc].srt",
+          "Show/Show - 18.mkv"
+        ],
+        "overwritten_in_place": [],
+        "untouched": true
+      }
+    },
+    "dotted": {
+      "both_languages_survived": false,
+      "survival": {
+        "gone": [],
+        "intact": [
+          "Show/Show - 18.mkv"
+        ],
+        "overwritten_in_place": [
+          "Show/Show - 18.en.cc.srt",
+          "Show/Show - 18.ja.cc.srt"
+        ],
+        "untouched": false
+      }
+    },
+    "dotted_apart": {
+      "both_languages_survived": true,
+      "survival": {
+        "gone": [],
+        "intact": [
+          "Show/Elsewhere - 18.en.cc.srt",
+          "Show/Elsewhere - 18.ja.cc.srt",
+          "Show/Show - 18.mkv"
+        ],
+        "overwritten_in_place": [],
+        "untouched": true
+      }
+    },
+    "same_language": {
+      "both_languages_survived": false,
+      "survival": {
+        "gone": [
+          "Show/Show - 18.ja.cc.srt"
+        ],
+        "intact": [
+          "Show/Show - 18.mkv"
+        ],
+        "overwritten_in_place": [
+          "Show/Show - 18.ja.forced.srt"
+        ],
+        "untouched": false
+      }
+    }
+  },
+  "two_shows_bare_episodes": {
+    "counts": {
+      "confident": 2,
+      "errored": 0,
+      "failed": 0,
+      "refused": 0,
+      "written": 2
+    },
+    "survival": {
+      "gone": [],
+      "intact": [
+        "Alpha/01.mkv",
+        "Bravo/01.mkv",
+        "Bravo/01.srt"
+      ],
+      "overwritten_in_place": [
+        "Alpha/01.srt"
+      ],
+      "untouched": false
+    }
+  },
+  "wrong_episode": {
+    "discovery_changed_nothing": true,
+    "explicit_changed_nothing": true,
+    "explicit_outcome": [
+      "REFUSED"
+    ]
+  }
+}

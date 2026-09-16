@@ -1,0 +1,10 @@
+{
+ "recorded": "2026-09-08 14:16:16",
+ "sample": 33757,
+ "all": true,
+ "seed": 20260908,
+ "accounted_pct": 96.78,
+ "resolved_pct": 92.088,
+ "missed_pct": 3.22,
+ "note": "Coverage must not regress. A film is NOT a parser failure -- see spec/09-corpus-strategy.md."
+}

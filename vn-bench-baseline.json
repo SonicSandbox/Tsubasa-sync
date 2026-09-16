@@ -1,0 +1,27 @@
+{
+ "//": "RUNBOOK A5b -- the pairing benchmark, and `D8` makes it the number a release is judged on. Ground truth is _work/probe_vn14_e2e.json: pairs confirmed by ALIGNMENT, not by a name. Re-record with: python -m tsubasa.dev vnbench --baseline. ⚠ A floor, never a target -- the suite fails when a number drops, and a rise is re-recorded deliberately.",
+ "recorded": "2026-09-09T04:35:24Z",
+ "pairs": 350,
+ "candidateRecall": 92.3,
+ "settledByName": 80.0,
+ "settledByNameNoAlias": 51.4,
+ "aliasGainPoints": 28.6,
+ "aliasHits": 111,
+ "medianFanOut": 282,
+ "p95FanOut": 558,
+ "same": 279,
+ "rescued": {
+  "kana": 1
+ },
+ "identity": {
+  "same": 279,
+  "different": 16,
+  "unsure": 55
+ },
+ "episode": {
+  "agree": 161,
+  "episode agrees, season differs": 162,
+  "disagree": 25,
+  "one side unresolved": 2
+ }
+}

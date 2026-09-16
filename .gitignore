@@ -1,0 +1,89 @@
+# ---------------------------------------------------------------------------
+# run artefacts and caches
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+_runs/
+_clone-verify.txt
+.coverage
+htmlcov/
+
+# build output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# environments
+.venv/
+venv/
+env/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# 🚨 MEDIA AND CORPUS — NEVER, UNDER ANY PATH
+# ---------------------------------------------------------------------------
+# The corpus lives outside this repository by construction
+# (`spec/09-corpus-strategy.md`). It is gigabytes of third-party media and
+# real filenames, and a single accidental `git add -A` from the wrong
+# directory is the mistake this block exists to make impossible.
+#
+# ⚠ These are extension rules rather than path rules on purpose: a path rule
+# only protects the directory somebody thought of.
+*.mkv
+*.mp4
+*.m4v
+*.avi
+*.ts
+*.m2ts
+*.webm
+*.mov
+*.opus
+*.mka
+*.flac
+*.aac
+*.wav
+*.mp3
+*.npy
+*.npz
+*.7z
+*.zip
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# corpus directories, in case one is ever copied in by hand
+tsubasa-corpus/
+_work/
+corpus/
+media/
+
+# ---------------------------------------------------------------------------
+# ⛔ SECRETS — belong outside every repository, never here
+# ---------------------------------------------------------------------------
+# `LEDGER-HOT.md` records an API key that reached a repository and was minutes
+# from permanent. Keys live in a keystore outside every git tree.
+*.key
+*.pem
+.env
+.env.*
+secrets.json
+credentials.json
+
+# ---------------------------------------------------------------------------
+# ⚠ THE ONE DELIBERATE EXCEPTION
+# ---------------------------------------------------------------------------
+# `tsubasa/data/aliases.tsv.gz` is 4.1 MB and MUST be committed. It is our own
+# work product, enumerated from Wikidata (CC0), and the package is measurably
+# worse without it — settled-by-name falls 80.0% → 51.4%, silently, because
+# the loader fails open by design. `tests/test_packaging.py` is what stops it
+# going missing.
+!tsubasa/data/aliases.tsv.gz

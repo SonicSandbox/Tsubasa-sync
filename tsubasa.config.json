@@ -1,0 +1,340 @@
+{
+  "//": "PROJECT ROOT CONFIG. Every tool walks UP from its working directory to find this file, so they all run from anywhere. NO SECRETS -- this repo auto-commits (TheForge syncs to Gitea every ~5 min) and git history has no undo. See LEDGER-HOT.md.",
+
+  "project": "tsubasa",
+
+  "corpus": {
+    "//": "Resolution order: TSUBASA_CORPUS env var, then this path resolved RELATIVE TO THIS FILE. Nothing hardcodes a machine -- see spec/10-deployment.md (migration). `corpus --stat` prints which one resolved and why, so a wrong path is visible immediately rather than three features in.",
+    "envVar": "TSUBASA_CORPUS",
+    "defaultRelative": "../../../WorldDominationLite/tsubasa-corpus",
+
+    "//readOnly": "The suite must NEVER write inside the corpus. subsync shipped a defect where analyze dropped _ref_2.ass and a 500 KB .npy beside the subtitles it was reading, inside a corpus its own README marks read-only. spec/07-test-plan.md enforces this as the one hard exception.",
+    "readOnly": true,
+
+    "//splitScope": "WHICH SLICES GET SPLIT 60/20/20 BY SHOW, and which are fixtures that must not be. spec/07-test-plan.md mandates the split but never names the slices -- recorded as a Part 1 defect in spec/07-test-plan.md. The rule applied here: a slice is SPLIT when it is large enough to tune against and its shows carry naming schemes; a slice is a FIXTURE when it is a scarce measurement artifact where sealing 20% would destroy evidence and prove nothing.",
+    "split": {
+      "naming":       { "showsAt": "*",              "why": "The parser corpus. 5,630 shows -- the overfitting risk spec/07-test-plan.md names." },
+      "subssuite":    { "showsAt": "*",              "why": "Pairing + alignment corpus. Real CM breaks, cross-source pairs." },
+      "consolidated": { "showsAt": "scriptfolder/*", "why": "consolidate-subs.sh output. Shows are one level down." },
+      "video-naming":  { "showsAt": "*",              "why": "229 shows / 10,526 files. VIDEO release names with the video's own extracted track as content -- the other half of the pairing problem, and 380 PGS .sup files." }
+    },
+    "fixtures": {
+      "opensubtitles":  "6 titles x up to 15 languages. A LANGUAGE-coverage fixture, not a naming corpus -- every title uses the same OpenSubtitles scheme, so a split leaks nothing and seals nothing.",
+      "xplat-en":       "The ONLY non-Japanese calibration data -- 3 Manifest pairs. Sealing 20% would destroy the evidence behind the escalation band (spec/05-interface.md) and prove nothing.",
+      "western-naming": "A names-only text file (904 release names). No files, no shows, nothing to seal.",
+      "video":          "Sintel -- the single shippable CC-BY video fixture.",
+      "video-derived":  "5 extracted audio/track sets. Measurement fixtures for alignment and VAD, referenced by name.",
+      "_source-zips":   "The SubsSuite archives as delivered. Raw input to subssuite/, already represented there.",
+      "_work":          "Probe scripts, probe results, downloaded engines. Not corpus."
+    },
+
+    "//sealed": "20% held back, opened ONCE at the end. LEDGER-HOT.md: never read the sealed slice before the final gate. This is enforced MECHANICALLY, not by prose -- tsubasa.dev.corpus.shows() refuses the sealed slice unless allow_sealed=True AND TSUBASA_UNSEAL=i-am-running-the-final-gate is set.",
+    "unsealEnvVar": "TSUBASA_UNSEAL",
+    "unsealToken": "i-am-running-the-final-gate",
+    "shares": { "dev": 60, "validation": 20, "sealed": 20 },
+    "splitManifest": "corpus-split.json"
+  },
+
+  "oracle": {
+    "//": "THE ORACLE. Workshop/subsync/ is the reference implementation and it stays untouched. Its tests/corpus.py carries 29 pairs of ground truth measured TWO independent ways that agree, neither using a split fitter -- so it is not the tool grading its own homework. Track B's acceptance suite runs against it (spec/12-alignment.md sec 8). It needs NO media: the reference tracks were extracted once into tests/fixtures/vidref/ (384 KB of text), which is the only reason the alignment suite can live in the vault at all.",
+    "envVar": "TSUBASA_ORACLE",
+    "defaultRelative": "../subsync",
+    "//readOnly": "NOTHING writes here, not the tool and not the suite. subsync/SubtitleMegaTest is marked do-not-modify by its own README, and subsync shipped a defect where analyze dropped scratch files inside it."
+  },
+
+  "media": {
+    "//": "REAL VIDEO CONTAINERS, for the checks that need one. RUNBOOK 1d (the native container reader) must be proved against a real MKV, and the only real ones on the originating machine sat in a Desktop folder outside the corpus -- which HANDOFF.md forbids a suite from naming. So the suite asks paths.media_root() and SKIPS, with the reason printed, on a machine that has none.",
+    "envVar": "TSUBASA_MEDIA",
+    "defaultRelative": "../../../WorldDominationLite/tsubasa-corpus/video",
+    "//readOnly": "Read-only, like the corpus. Nothing here is ever written, moved or renamed by the tool or the suite.",
+    "//default": "The default now RESOLVES: 0c staged video/Sintel-60s.mkv (an ffmpeg-muxed 60s CC-BY clip with a subtitle track) beside Sintel-60s.srt, ffmpeg's own extraction of that track. So the four real-container checks run on a fresh clone with no configuration, and TSUBASA_MEDIA is an OVERRIDE for pointing at a bigger library -- not a requirement.",
+    "//gap": "CLOSED 2026-09-08 at RUNBOOK 0c. Was: 'RUNBOOK 1d says against the corpus .mkv fixtures and the corpus contains NO .mkv at all'. Kept as the record -- the checks were skipping, not passing, and nothing on screen said so."
+  },
+
+  "cache": {
+    "//": "spec/02-data-model.md: per-user app data, NEVER beside the media.",
+    "envVar": "TSUBASA_CACHE",
+    "windows": "%LOCALAPPDATA%\\tsubasa",
+    "posix": "~/.cache/tsubasa"
+  },
+
+  "test": {
+    "//harnessDir": "The runner GLOBS this and FAILS on anything not registered in `suites` or excused below WITH A WRITTEN REASON. Prose does not enforce -- the build that wrote this rule down still ENDED with four orphaned harnesses. doctrine/verification.md.",
+    "harnessDir": "tests",
+    "harnessPattern": "^test_.*\\.py$",
+
+    "//runLogDir": "Every failing suite's FULL output is written here, named for the run. A full run piped through a filter once reported one failure with its name scrolled off, costing a second 8-minute run to learn a name the first run already knew.",
+    "runLogDir": "_runs",
+
+    "//excused": "A harness may be excused -- a build step, a one-off probe, a finalization gate -- but THE REASON LIVES HERE, IN WRITING.",
+    "excused": {},
+
+    "//suites": "hermetic = touches nothing shared at all. needsCorpus = reads the corpus (so it is skipped, and SAYS SO, when the corpus is absent -- a skip is not a pass). needsMedia = needs real video files.",
+    "suites": [
+      {
+        "name": "wiring",
+        "cmd": ["-m", "pytest", "tests/test_wiring.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 0. Config resolves, package imports, corpus path resolves, cache path resolves, split manifest is intact. Each failure points somewhere specific."
+      },
+      {
+        "name": "runner",
+        "cmd": ["-m", "pytest", "tests/test_runner.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "The runner's own guarantees, driven against synthetic configs. It is the one piece that cannot be checked by the thing it checks: orphan detection, zero-check detection, tooling-fault codes, the lock."
+      },
+      {
+        "name": "encoding",
+        "cmd": ["-m", "pytest", "tests/test_encoding.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 1a. The highest-stakes code in the project: sniff the codec, decode STRICTLY, write the same codec back. Fixtures are GENERATED because neither corpus contains a Shift-JIS file -- video-naming is 3,026 of 3,039 UTF-8, so the worst documented defect would otherwise ship untested."
+      },
+      {
+        "name": "parsing",
+        "cmd": ["-m", "pytest", "tests/test_parsing.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 1a read side. The tolerance ladder, and the outcome rule: OK-with-zero-cues and ERROR are different. Both of subsync's occurrences of that confusion are reproduced as named cases -- a WebVTT file routed to the ASS parser, and a reordered [Events] Format line."
+      },
+      {
+        "name": "rewrite",
+        "cmd": ["-m", "pytest", "tests/test_rewrite.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 1a write side. Enforces the field whitelist by measurement: a ZERO SHIFT must produce byte-identical output in every format and codec. If any part of the file were rebuilt rather than passed through, that fails immediately."
+      },
+      {
+        "name": "cache",
+        "cmd": ["-m", "pytest", "tests/test_cache.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 1b. Content-hash keyed, per-user, disposable. Proves the head/tail trick by COUNTING BYTES READ (a fast disk would hide a full read), proves nothing is written beside the media, and proves stale/corrupt/version-mismatched entries are a MISS rather than a wrong answer."
+      },
+      {
+        "name": "normalize",
+        "cmd": ["-m", "pytest", "tests/test_normalize.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Track A1. Fold hard enough that four romanisations of one title match, but not so hard that four different SEASONS collapse. Carries the Gintama/Gintama'/Gintama° case that subsync's slug regex got wrong, and the Naruto/Shippuuden case where the ASCII-only slug discarded the only discriminating information in the filename."
+      },
+      {
+        "name": "naming",
+        "cmd": ["-m", "pytest", "tests/test_naming.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Track A2. Episode and season extraction, plus the union of anitopy + guessit + ours. Carries the verified >=1000 defect (One Piece 1121 parsed to None AND poisoned the title), the two-shows-in-one-file refusal found in the real corpus, and the rule that a film's absent episode number is the CORRECT answer rather than a parse failure."
+      },
+      {
+        "name": "series",
+        "cmd": ["-m", "pytest", "tests/test_series.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Track A3, the risky step. Carries the four cases that prove a substring ratio cannot do this job -- measured with LCS the true positive (Ace of Diamond / Diamond no Ace) scores BELOW a true negative (Tongari Memole / Atelier). Thresholds are derived by `python -m tsubasa.dev seriesgate`, and there is NO empty band, so UNSURE is structural."
+      },
+      {
+        "name": "scheme",
+        "cmd": ["-m", "pytest", "tests/test_scheme.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Track A4. A user's own folder is a labelled corpus of one show -- across a season the group, resolution and codec are constant and the episode MOVES, so the episode column is found without recognising any pattern. Carries the cases no regex can reach (86 Eighty-Six, 5-toubun no Hanayome) and, on the real corpus, checks that inference both AGREES with the parser >=90% and rescues files it missed."
+      },
+      {
+        "name": "bitmap",
+        "cmd": ["-m", "pytest", "tests/test_bitmap.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 1c. PGS (.sup) and VobSub (.idx) timing, no OCR, against the real 382 .sup / 46 .idx in the corpus. Also asserts the other half of the claim: bitmaps are a timing REFERENCE and the writer must refuse them, which is enforced by their cues carrying no rewrite spans."
+      },
+      {
+        "name": "arbitration",
+        "cmd": ["-m", "pytest", "tests/test_arbitration.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step A6 (D7). Cluster coherence -- the escalation band's SECOND signal, because no single per-pair threshold can work: a correct English pair scores 1.70x and a wrong anime pair 1.95x. The suite runs against the probe's own 44 correct and 60 wrong clusters and requires this implementation to reproduce every recorded coherence value; it disagreed on 4 at first, which found a real definition error (agreement must be with a COMMON REFERENCE, not a transitive chain). At >= 0.60: 24/44 correct kept, 0/60 wrong accepted. The lift is one-directional -- coherence may raise a weak pair and may never refuse one."
+      },
+      {
+        "name": "layouts",
+        "cmd": ["-m", "pytest", "tests/test_layouts.py", "-q", "--no-header"],
+        "hermetic": true,
+        "why": "Step A5. The eight directory layouts Sonic named -- and the point is that NONE of them is enumerated in the code. Discovery walks everything and proximity is a SCORE, never a rule, which is the only reason layout 5 (a tree of subs against a tree of videos) works at all; films and episodes separate by PARSING, which is why layout 8 (subs, films and shows in one folder) is not a special case. Real temp trees, not mocks: a layout test that never touches a filesystem is testing a data structure."
+      },
+      {
+        "name": "pairing",
+        "cmd": ["-m", "pytest", "tests/test_pairing.py", "-q", "--no-header"],
+        "hermetic": true,
+        "why": "Step A5. Candidate generation. Two claims: 500 videos x 1500 subtitles is an INDEX and never a nested loop (750,000 comparisons become a few thousand), and season AND episode -- never episode alone, the defect that manufactured 305 false pairs and was made three separate times in one session. The index built to prevent it reintroduced it once during this build, and this suite caught it."
+      },
+      {
+        "name": "vn-bench",
+        "cmd": ["-m", "pytest", "tests/test_vn_bench.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step A5b -- D8 makes this THE RELEASE NUMBER. 350 pairs whose offsets were confirmed by ALIGNMENT, not by a name, so nothing is labelled by the thing being tested. Candidate recall 92.3%, settled-by-name 49.7% (NOT a success rate -- the rest are UNSURE and pair via timing). Fan-out is checked too, because recall alone is trivially satisfiable: an index returning everything scores 100%. The floor lives in vn-bench-baseline.json."
+      },
+      {
+        "name": "alias",
+        "cmd": ["-m", "pytest", "tests/test_alias.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step A7. The alias table -- a Japanese title and a Latin one bridged by a shared Wikidata entity, because `same_series` compares characters and those two share none (`宇宙戦艦ヤマト` vs `Space Battleship Yamato` scores 0.00). Most of this suite is the SAFETY property rather than the coverage: BOTH titles must independently reach a COMMON entity, so a one-sided hit on an abbreviation alias like `Eva` answers nothing -- which is the shape that made probe G resolve `ナルト` to a fish cake at 0.75. It also pins the invariant that makes A7 safe to ship on unaudited data: the table can only ever turn a verdict INTO `same`, never into `different`, so every other path is byte-identical to the build before A7. The coverage number lives in `python -m tsubasa.dev alias --grade`; the floor here exists to catch an EMPTY or mis-keyed table. Corpus checks SKIP with the reason printed."
+      },
+      {
+        "name": "duration",
+        "cmd": ["-m", "pytest", "tests/test_duration.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step A9. Duration as a pairing signal -- the cheapest filter there is, because the container is already probed and the last cue is already parsed. ⭐ Every constant is MEASURED and carries its population: LONG_RATIO 1.25 from a cost/yield sweep over 1,138 correct and 1,564 wrong directed pairs, floored by how often a subtitle's own stray final cue exceeds the bound (21.14% at 1.05, 0.27% at 1.25); LONG_ABSOLUTE 120 s from the offset census (CM blocks group at +9.5-10 s, OP differences at ±90 s). 🚨 The spec's `shorter by more than ~15% -> reject` was MEASURED AND NOT BUILT: it destroys 2.5% of correct pairs to catch 1.8% of wrong ones, and the lowest correct same-video ratio is 0.056. Shortness RANKS; it never rejects. 🚨 The last cue is not a robust statistic either -- on 1.94% of 1,495 real files it sits >120 s past the previous cue, so `content_end()` drops orphan trailing cues before any ratio is taken."
+      },
+      {
+        "name": "explicit-pair",
+        "cmd": ["-m", "pytest", "tests/test_explicit_pair.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step A11. The explicit `--pair` escape hatch, and almost all of its value is in its REFUSALS -- `05-interface.md` calls it *the one command capable of* producing a confidently wrong file, because the user asserting `these two files go together` is NOT asserting `the alignment is findable`. So the verdict is made structurally unbypassable rather than merely un-bypassed: an `ExplicitPair` carries no `write`/`outcome` field at all (pinned by a `__slots__` assertion), `decide()` takes the verdict positionally and `force` keyword-only, iteration over a pair or a plan RAISES because `for v, s in pairs:` is the bypass shape, `writable()` does not exist until every accepted pair is decided, and a `Decision` can only be minted by `decide()`. ⛔ `force` overrides a REFUSAL, never an ERROR -- ERROR means unmeasured, so there is no offset to stand behind, and `LEDGER-HOT.md` records subsync shipping that exact confusion twice."
+      },
+      {
+        "name": "movies",
+        "cmd": ["-m", "pytest", "tests/test_movies.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step A10. Movie libraries -- a launch use case that produced ZERO pairs before it, because `pair_folder` was episode-gated and a film has no episode number. Stem match through the LEARNED decoration vocabulary carries 99.91% of the easy half (subtitle named after the video) and 37.49% of the hard half (two independent uploads of one film); title+year adds 1.72%; sole-video-in-folder covers the Plex/Jellyfin layout; 60.58% is handed to TIMING with its candidates rather than guessed. ⛔ TWO SPEC CLAIMS WERE DISPROVED HERE AND BOTH ARE AMENDED IN `06-edge-cases.md` §3.5: cuts of one film do NOT overlap at 0.52 -- `_title_from` deletes bracketed runs, so `[Final Cut]` and `[Theatrical]` produce IDENTICAL titles (1.000) and no title measure at any threshold separates them; and DURATION does not discriminate them either, since Blade Runner's cuts all run 116-117 min. ⭐ The EDITION TAG is load-bearing and duration is only the backstop. The language-tag trap is real and handled: `Inception (2010).en.srt` -> `inceptionen` survived only because one string was a prefix of the other."
+      },
+      {
+        "name": "titlegate",
+        "cmd": ["-m", "pytest", "tests/test_titlegate.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step A2b+. The TITLE gate, and it exists because `parsergate` has a structural blind spot: it scores the UNION of three parsers, so when anitopy rescued an episode OUR parser had mangled, the headline stayed green while our own TITLE stayed wrong -- and series identity consumes the title. A2-fix moved that defect 9.1% -> 0.00% while the parser gate barely moved. The metric is self-referential and BOTH halves are load-bearing: an episode MARKER still in the title AND its number being the one the parser called the episode. Number-equality alone accused `５→９` and `Last Cop 2nd`; marker-presence alone would accuse a show genuinely named `第1話`. ⛔ The obvious metric -- same-show key agreement -- was measured and REJECTED: 21.6% of entries carry more than one script, and `Space Ironmen Kyodyne`/`Uchuu Tetsujin Kyoudain` are both Latin, both one entry, and both right. It is kept as a trend line and is NOT gated. ⚠ The baseline is a CEILING, not a floor: the suite fails when the number RISES.",
+        "excusedSlow": false
+      },
+      {
+        "name": "kana",
+        "cmd": ["-m", "pytest", "tests/test_kana.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step A3b. The kana phonetic bridge -- fold BOTH a kana title and a romaji title to one phonetic skeleton and RANK, instead of testing equality (which matched 22.7%). Most of the suite is the refusal: the 0.85 accept threshold sits in a measured empty band where 300 fabricated kana peaked at 0.83, and a near-tie between a show and its sequel is refused even at a high score. The full validation is `python -m tsubasa.dev kanagate --all`; this samples and prints its denominator. Slow (~27 s) because the fabricated control scores 300 strings against 11,210 candidates -- that IS the check."
+      },
+      {
+        "name": "decoration",
+        "cmd": ["-m", "pytest", "tests/test_decoration.py", "-q", "--no-header"],
+        "hermetic": true,
+        "why": "Step A2c. The LEARNED decoration vocabulary -- 176 tokens found by `df >= 25 shows AND canonical-title rate < 5%` over 203,591 non-sealed catalogue rows, shipped as bundled data. Most of the suite is the guard rather than the feature: a learned vocabulary contains `ja`, `tv`, `end` and single kanji like the mechanism could never contain safely as bare words, so the applier is context-gated and every LEDGER title-destruction case is asserted to survive. Runs with no corpus -- it checks the shipped artefact, not the derivation."
+      },
+      {
+        "name": "container",
+        "cmd": ["-m", "pytest", "tests/test_container.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsMedia": true,
+        "why": "Step 1d (D2). The native Matroska reader: SeekHead -> Cues -> block headers, 0.085 s and 30 KB against ffmpeg's 3.04 s and 1.4 GB. Most of it runs on synthetic containers written by the suite itself, so the fixture IS the answer key; the real-video checks compare against the ffmpeg-extracted .ass already in the corpus and SKIP where there is no media. Half the checks are about the guard that refuses a Cues index which is not complete -- a partial index returns a subtitle missing lines and looks perfect doing it."
+      },
+      {
+        "name": "alignment-oracle",
+        "cmd": ["-m", "pytest", "tests/test_alignment_oracle.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Track B1. THE suite that makes an efficiency change admissible: B1 replaced a 4,800-offset scan with a difference histogram and made a pair 135x cheaper, and the only thing between that and a silent accuracy loss is 29 pairs of truth measured WITHOUT it, two independent ways that agree. Asserts the offsets, that every cue outside a declared undetermined span gets the truth's offset, and that the truth's break lies inside that span -- because the corpus itself says the recorded split TIME is loose and cue-level correctness is what matters. Runs from 384 KB of extracted reference tracks; no media."
+      },
+      {
+        "name": "negative-controls",
+        "cmd": ["-m", "pytest", "tests/test_negative_controls.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Track B1. A positive result is not evidence until the instrument has been shown to say NO. Time-reversed, jittered, a different show and a sequel season must all be refused; a subtitle MISSING its opening cues must produce ONE segment, because that exact case invented a 127-second break when the overall-gain guard was dropped as redundant. Carries its own positive control first, so five refusals cannot pass trivially against a function that returns zero."
+      },
+      {
+        "name": "verdict",
+        "cmd": ["-m", "pytest", "tests/test_verdict.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Track B8. The DECISION on top of the offsets, and every defect it exists to prevent is a case where the alignment was fine and the answer was wrong anyway: a cut file scoring 91% overall while its opening minutes are visibly out; a one-cue subtitle scoring 5.15x chance and reading as CONFIDENT; a correct English pair at 1.70x refused by a threshold fitted on anime (57 of 364 measured cross-platform pairs, 16%, sit under 2.5x while being correct); a refusal with no reason, which reads as a success at every surface below. So the checks are mostly about REFUSALS and about ORDER -- measurable, then holds-throughout, then the band -- because a band-first reading calls a never-measured pair `refused` and accepts a file that is confidently mis-timed for its opening minutes. Pins the one-directional coherence lift (a coherent cluster may raise a pair out of the 1.5-2.5x band and may never push one down), the four properties of the CM-break hand-back text (stretch, size, likely cause, fix), that a refusal carries NO confidence word (the GUI painted a run green because \"11 confident, 1 refused\" contains `confident`), and that a speech-mask verdict RAISES until B6 fits its band rather than borrowing the cue-vs-cue 2.5 that would silently refuse the 2.42x pair this project measured as correct. Real oracle material carries the end-to-end claims: the 5 MUST_REFUSE pairs, the real drifting TV edit, and a real broadcast cut that must be WRITTEN with its segments rather than refused."
+      },
+      {
+        "name": "sidecar",
+        "cmd": ["-m", "pytest", "tests/test_sidecar.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 3a. Reading the language out of a subtitle filename, and writing the next one. ⭐ This is thirty lines of string handling that TWO MATURE PROJECTS GET WRONG, in opposite directions, so a check for one passes happily against the other: subliminal 2.7.1 reads `.ja.forced.srt` as `und` (it expects `.ja.fo.`), so a correctly-named forced subtitle reads back as `no subtitle present` and is re-downloaded forever; Bazarr matches flags as SUBSTRINGS, so `Show.chi.srt` is Chinese-and-hearing-impaired and `Show.hin.srt` is Hindi-and-hearing-impaired. Both fixed by two one-line rules -- parse the language BEFORE trimming flags, and strip flags as whole dot-delimited tokens -- expressed here as one algorithm: the leftmost token in a bounded window that is a language code AND has nothing but flags to its right. The right-hand constraint is the guard that stops `is` (Icelandic) in `My.Name.Is.Khan.hi.srt` from winning. Also pins: `.ja` and `.jpn` land in ONE dedupe slot; the slot is case- and width-folded because `EP01.SRT` and `ep01.srt` are one file on two platforms and two on the third; NAME_MAX is 255 BYTES and CJK hits it at ~85 characters, so a trim is measured in bytes, never splits a character, and is REPORTED with what it costs. ⚠ hato imports this reader rather than writing its own -- its spec says so -- so the shapes here are a compatibility promise. The corpus pass is not decoration: it runs the reader over real filenames written by strangers and asserts the two invariants those two defects violate, on the real `chi`/`hin`/`thi` tags a fixture would not have thought to contain."
+      },
+      {
+        "name": "dedupe",
+        "cmd": ["-m", "pytest", "tests/test_dedupe.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 3a. One subtitle per (video x language): which candidate wins, and where the losers go. ⛔ TWO CLAIMS, and neither is about ranking. (1) NOTHING IS EVER DELETED -- `LEDGER-HOT.md` says trash only, and this is the structural version: the suite READS `dedupe.py` and fails if `os.remove`, `os.unlink`, `shutil.rmtree` or `.unlink(` ever appears in it, because a prose rule about deletion is exactly what a future edit walks past. `trash()` is dry-run by default (`doctrine/robustness`: a destructive tool's first dry run is a design review) and the fallback is a MOVE into `.tsubasa-trash/` that keeps the original name and never overwrites a same-named file already there. (2) A REFUSED CANDIDATE NEVER WINS, and that is a GATE rather than a sort key -- sorting by it makes the least-bad refusal win whenever EVERY candidate was refused, which writes the best of several rejected files and is the confidently wrong answer Rule 2 forbids. When nothing is confident there is no winner, nothing is written, nothing is trashed, and the reason says so. ⚠ An UNALIGNED candidate is treated exactly like a refused one, and its segment count reports as huge rather than zero -- zero would sort it FIRST under rule 4 (`fewer segments is better`), so an unmeasured file would win a tiebreak it never earned. The send2trash path is driven through an injected sender and `TSUBASA_NO_OS_TRASH=1`, the same seam shape as `TSUBASA_NO_NATIVE_DEMUX=1`, because send2trash is NOT installed on the build machine and `07-test-plan.md` forbids code that never runs in the local configuration. Also pins `--keep-all`: every confident candidate written, nothing trashed, names distinct (a collision there is data loss), the tag naming the SOURCE rather than the language, and the tag placed BEFORE the language so the names we write read back as the language we wrote them for -- the spec's own `<video>.<lang>.<tag>` order does not round-trip through our reader."
+      },
+      {
+        "name": "apply",
+        "cmd": ["-m", "pytest", "tests/test_apply.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 3a, the WRITE half -- ⛔ the only module in the project that changes a user's folder. `02-data-model.md` lists four stores and marks exactly one NOT disposable; this writes to it, so most of these checks assert that something did NOT happen. 🚨 The cheapest proof the field whitelist holds is the ZERO case: a retime by 0.0 with nothing dropped must come back BYTE-IDENTICAL, on every writable format and on real corpus files -- any accidental rebuild (a re-serialised style block, a normalised timestamp shape, a rewritten line ending) shows up there and nowhere else. Covers cue-block REMOVAL, which `retime` structurally cannot do: each format defines its own block span and must, because the honest answer differs -- SRT runs to the next block (safe ONLY because SRT has no comment syntax) and renumbers the survivors, which is the one thing the whitelist explicitly adds for a drop; VTT stops at the cue's own extent because a NOTE/STYLE/REGION block may sit between two cues and dropping one turns a valid file invalid; ASS is a single event line. Then ⭐ D9: cues timed inside a removed CM block map to reference time that no longer exists and would overlap the next segment, so they are dropped, COUNTED and reported -- pinned against `12-alignment.md` §5's own measured cut (+0.400 / -9.825 @3:42), including that the boundary is `split - offset` because `segments` is on the REFERENCE axis while the writer holds a SUBTITLE time, and that a POSITIVE jump removes nothing because it inserts time rather than removing it. Plus: dry-run by DEFAULT; write first and trash second; a file written OVER is never then trashed (that would delete what we just produced and leave the user with neither); a per-pair failure is recorded and the folder continues; and the original codec is written back on a real Shift-JIS file, which is the worst bug this class of tool can have."
+      },
+      {
+        "name": "results",
+        "cmd": ["-m", "pytest", "tests/test_results.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 3a-bis -- ⭐ THE RESULTS DB, the store that answers *has this already been synced?* `02-data-model.md` lists it as one of four stores and no runbook step built it, so two ruled `06-edge-cases.md` §7 behaviours could not hold: a re-run with nothing changed did the whole job again, and there was nothing for a file on disk to WIN against. Keyed on the content hash of the file this tool WROTE, because renaming is what this tool does and a path-keyed store misses its own output on the very next run. THREE claims carry it. 🚨 A settled folder is re-run with ZERO CONTAINER READS -- counted through a reader that WRAPS the real one, never timed, because a wall-clock budget is flaky on a loaded machine and vacuous on a fast one; the 24-episode case carries the clock too, as the only thing that would catch a skip that hashed every byte of every 1.4 GB video. 🚨 THE FILE ALWAYS WINS, asserted from both sides -- an EDITED output and a DELETED one, each re-measured rather than believed, because a DB that can veto a re-sync can make the tool refuse to fix something it broke. ⛔ A SKIP NEVER COSTS A USER A FILE: `_resolve_ownership` rule 1 is computed from the slots of THIS run and a skipped video contributes none, so its answer would be an ordinary losing candidate of whichever neighbour also matched it -- the 3b library-losing shape through a new door. Checked on the guard AND on the library that reaches it (two rips of one episode, one re-encoded so its twin is skipped while it is not); ⚠ NOT on two shows with bare episode numbers, where each video is offered both files so a new neighbour unsettles BOTH and the hazard cannot arise -- written that way first and it proved nothing. ⭐ The load-bearing invention is `Record.stable`: run 1 writes a file it had never weighed against anything and leaves the original, so the folder holds two subtitles where `05-interface.md` rules one, and a store that called that state settled would skip run 2 and keep BOTH FOREVER -- measured exactly that way while this was built, with `test_pipeline.py`'s convergence check going red. A record is skip-eligible only when everything that survived the run was already among the candidates the plan was made from. Also: a DRY RUN records nothing (the next run ACTS on a record, so a plan-composed one would tell tomorrow it was done and tomorrow would agree); a FORCED write is deliberately not recorded, so the refusal is re-stated every run rather than skipped in silence; the explicit path RECORDS but never SKIPS, because naming a pair is an instruction and `plan.writable()` raises on an undecided one; `results=False` is distinct from `results=None`; a corrupt record is a miss and never an exception; an in-place retime is NOT a surviving candidate, because a retime is length-preserving and `os.path.exists` would call it one."
+      },
+      {
+        "name": "api",
+        "cmd": ["-m", "pytest", "tests/test_api.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 3b -- the LIBRARY API, which is the product; the CLI and the GUI are wrappers over it. Everything under it was green and unreachable from outside a test, so these checks are weighted towards the SEAMS, where the 2026-09-09 adversarial pass found its worst findings. Three classes carry the weight. 🚨 `scan()` OPENS NOTHING -- asserted by making open() raise for any path inside the scanned tree, not by reading today's source for absent reads, so the next person who adds a container read here finds out at once; it carries its own control proving the guard can fire. 🚨 `sync()` on raw tuples goes through `explicit.explicit_pairs()` -- ruled 2026-09-08 and binding, because a tuple path silently skips every refusal A11 built, and it is asserted by feeding it those refusals and requiring each one back rather than by reading the code. 🚨 NOTHING IS WRITTEN unless write=True, checked by hashing the whole tree before and after rather than by trusting a flag. Also: junk is ignored SILENTLY (a subtitle folder full of .txt is surasura's real case, and a refusal per .txt is noise a real refusal then hides in); the subtitle folder never contributes a video and the video folder never a subtitle, without which two-folder mode means nothing; NCOP/NCED refused on BOTH sides (`movies.is_creditless` was reachable only from the film path, so a creditless opening with an episode number went straight down the TV path); ranking fixtures named so the expected winner sorts LAST under every lower key, because a ranking check is otherwise rescued by its own tiebreaks; and `Item.cues` fed `duration.content_end`, never max(), since on 1.94% of real files the last cue is an orphan >120 s past the rest."
+      },
+      {
+        "name": "pipeline",
+        "cmd": ["-m", "pytest", "tests/test_pipeline.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 3b -- `sync()`, the run: the container read, the runtime gate, the aligner, the cluster probe, the verdict, dedupe and the write, wired end to end for the first time. THREE claims carry it. 🚨 The TUPLE PATH goes through `explicit.explicit_pairs()` -- ruled 2026-09-08 and binding, because a `for video, subtitle in pairs:` loop walks past every refusal A11 built -- and it is asserted by feeding sync() those five refusals (swapped, missing, a directory, one subtitle claimed by two videos, a flat pair) and requiring each one BACK as a result, not by reading the source for a call. 🚨 NOTHING IS WRITTEN unless write=True, asserted by hashing every byte in the tree before and after. 🚨 `output_path` is set only when a file actually MOVED -- `apply_plan` fills `report.written` in a dry run too, so that is the seam where a dry run learns to claim it wrote the folder. Also: the reference is the track with the MOST cues (a forced track is signs-only, and the fixture names the winner so it loses every lower key), a bitmap track is labelled from BOTH vocabularies (Matroska `S_HDMV/PGS`, ffmpeg `hdmv_pgs_subtitle`), one container read per VIDEO however many candidates, the runtime gate refuses BEFORE the aligner runs (proved by asserting align was never called, since an outcome check alone passes against a gate that runs after it), unreadable and readable-but-empty come back with DIFFERENT reasons (the REFUSED/ERROR conflation subsync shipped twice), --force is explicit-pairs-only and a forced write reports REFUSED and never `confident`, vad=True neither works silently nor raises MaskBandNotFitted from four frames down, and cluster offsets are MILLISECONDS while `Fit` offsets are seconds. ⚠ The container reader is INJECTED for shapes a fixture cannot cheaply carry and REAL (a synthetic Matroska built by test_container's own writer) for everything end to end."
+      },
+      {
+        "name": "e2e",
+        "cmd": ["-m", "pytest", "tests/test_e2e.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 3c-0 -- ⭐ THE END-TO-END BENCHMARK, and the only thing in this project that measures the PRODUCT rather than a stage. `vnbench`, the release number, scores NAMES through same_series and never calls sync(); it sat at 80.0% through the whole of 3a and 3b and would have done so if every one of them were broken, which is why the two-folder output-directory defect survived to a dry run and why ten more waited for an adversary. This assembles a real library in a TEMP directory from the staged media -- `video-derived/yomi18/track_2.ass` remuxed into a real Matroska (staged here, and re-verified against its own source on EVERY run) plus `video/Sintel-60s.mkv`, two different CODECS and one with video and audio streams -- restores each file's ORIGINAL release name, and runs scan() -> sync(write=True) over nine library shapes. ⛔ It asserts on the resulting TREE, never on the report, and the tree carries a CONTENT HASH: it used to be names and sizes, and a retime is length-preserving, so a dry run that rewrote every candidate in place and a REFUSED file that was mangled both passed. 🚨 Its strongest claim is the BROADCAST CUT -- a real AT-X capture against the streaming video's own track lands both offsets within 7 ms and 46 ms of the measured truth, with D9 dropping the one stranded cue; the OFFSETS are the claim, because `Fit.gaps` calls the crossing undetermined across 113.9 s and the reported break is a reference cue start. ⚠ That truth is subsync's, measured cue-vs-cue against a file byte-identical to this reference -- NOT an independent modality -- and `shincaps` is `nanakoraws` shifted by a constant 33.233 s, so the pair tests offset-INVARIANCE, not two witnesses. Also: a dry run changes nothing by content, the written cues MOVED by the offset the report stated (source cue read BEFORE the run, since the Sintel source and output were once the same path), a self-extraction aligns at EXACTLY zero, the measured offset agrees with one derived from 12-alignment.md §5, the wrong episode changes nothing on BOTH paths, a two-show library with bare episode numbers keeps every source, a second run CONVERGES and everything it moved is recoverable from the trash by hash (which is the RULING -- an xfail calling it a defect was written and removed the same day, because `test_pipeline.py` asserts the opposite), --out leaves the library alone, and --keep-all + --out on two real releases of one episode supersedes nothing. ⚠ ONE check is xfail(strict=True): a bracketed language tag like `.ja[cc].srt` reads `und`, so two languages share one slot -- 11.53% of real corpus filenames read `und` with a resolvable code, though zero slots in that Japanese-only corpus can exhibit the loss. ⛔ Structurally cannot cover: one episode of one show plus Sintel (a SHAPE benchmark -- `vnbench` is the population number), the runtime gate's real work (track_2.mkv is subtitle-only, so its duration echoes its own track), the mask path (B6), and whether a player renders the result."
+      },
+      {
+        "name": "cli",
+        "cmd": ["-m", "pytest", "tests/test_cli.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 3c -- ⭐ THE COMMAND LINE, and `05-interface.md` rules its output shape verbatim: *RULED, do not redesign*. THREE claims carry it. 🚨 REFUSALS AND ERRORS PRINT FIRST -- *the one thing needing attention must not sit below 23 successes* -- asserted by LINE INDEX on a report whose refusal is LAST in the list, because a fixture already in the right order is green against a renderer that does no ordering at all, plus a control where everything is refused so a plain reverse fails. ⛔ NO POSITIVE WORD PRECEDES A PROBLEM: `LEDGER.md` §Interface records a GUI painting a run green because *\"11 confident, 1 refused\"* contains `confident`, so the summary line IS `SyncReport.summary()` verbatim and the check asserts nothing is prepended. ⛔ THE CLI DECIDES NOTHING -- every word, number and reason is fed in on a `Result` and required back unchanged (all four confidence words, parameterised), and a SOURCE check refuses an import of `align`, `dedupe`, `verdict`'s neighbours or `naming`, because *it happens not to call one today* is a statement about today's code. ⭐ That last check earned its place on the first run: the CLI was importing `naming.episode` to fill the ruled EPISODE column, a second answer to a question the run had already settled with better evidence -- `Result.episode` now carries it and `--json` is checked against `Result.__slots__` so a field added there and forgotten here fails. ⚠ EVERY LAYOUT CLAIM HAS A JAPANESE TWIN: `05-interface.md`'s own worked example is `片田舎のおっさん S02E01.ass` and a CJK character takes TWO terminal cells, so a report that lines up under ASCII fixtures is ragged on the files this tool exists for -- the arrow must land in the same column for both, and clipping a CJK name must never overshoot on an odd boundary. ⭐ SIX DEFECTS CAME FROM LOOKING AT A REAL RUN RATHER THAN FROM A CHECK: a header that ran to column 100 on a real path, `-0.00s` on a re-run (`x + 0.0 or 0.0` does NOT fix that -- -1e-9 is truthy), `x → x` on an in-place retime, *\"1 cue ... were dropped\"* said twice with the noun pluralised and the verb not, `...HEVC AAC).srtREFUSED` with no space, and a `--verbose` line at 150 cells. Two more were in the LIBRARY: `summary()` said *\"0 would sync\"* over a folder that was entirely already in sync -- a plan the tool never made -- and THREE layers each composed *written under force* independently, one of them at plan time. Also: exit 0 / 1 / 2 (a refusal is NON-ZERO, because a script piping this has to be able to tell); every usage refusal is a SENTENCE and never a traceback, with the manifest naming the ENTRY that is wrong; a dry run moves not one byte, asserted by hashing the tree; and `--json` is never silent over a settled library -- NDJSON on stdout, the summary on stderr, because printing nothing and exiting 0 is what a broken run looks like."
+      },
+      {
+        "name": "gui",
+        "cmd": ["-m", "pytest", "tests/test_gui.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 3d -- ⭐ THE GUI'S NON-VISUAL HALF, and it exists because of the two defects `LEDGER.md` §Interface records, both in a GUI. 🚨 CONSTRAINT 4, THE `\"confident\"` SUBSTRING: *the GUI painted a run containing refusals green, because \"11 confident, 1 refused\" contains the word `confident`* -- so every count is computed from the `outcome` FIELD, and the check feeds that exact summary string alongside a real refusal, so a reader that matched the word would report a clean run and go red here. Three more angles on the same trap: a refusal whose REASON contains the word moves no count; a FORCED write is REFUSED and counts as refused even though it wrote (a screen saying `1 synced` over a file the user forced past a refusal is the confidently wrong report this tool exists to avoid); and the headline names what is WRONG before what worked, asserted by index, which is `05-interface.md`'s ruled ordering one line long. 🚨 CONSTRAINT 3, DPI: *a DPI-aware window clipped its own button off the screen -- every assertion passed; one screenshot showed it immediately.* Tk scales FONTS and leaves `padx`, `ipady`, `rowheight`, `wraplength` and `geometry()` in raw pixels, and the build machine is 3000x2000 at 239.6 dpi -- ratio 2.496 -- so the unscaled window has never once been seen at 1.0. ⭐ `pin()` earned its check while the layout mockups were being drawn: `geometry()` ALONE LOST to the geometry manager and a window asked for 1647 px came back 1089, which passes *\"does it fit on the screen\"* by construction because it SHRANK rather than overflowed; min == max is the fix and both directions are now asserted. ⛔ FOUR THINGS THAT READ AS FAILURE AND ARE NOT, each its own check: exit 1 is a REFUSAL and not a broken command (only 2 means the command could not be run); output on stderr is the `--json` SUMMARY, put there on purpose so a pipe stays pure NDJSON; zero rows is a SETTLED library and needs a name, because *printing nothing and exiting 0 is what a broken run looks like*; and a ⚑ cut result is CONFIDENT. ⛔ A TORN LINE IS A FAULT AND IS NEVER SILENTLY DROPPED -- `LEDGER-HOT.md`'s *never conflate parsed zero cues with could not read the file, shipped twice*, one process boundary out: a GUI showing eight rows for a nine-result run with nothing on screen saying so. A faulted line forces attention even when every row is confident. ⭐ AND THE DOUBLE IS NOT THE ONLY WITNESS: `LEDGER-HOT.md` records a whole seam going green against an injected reader that disagreed with the real one about a type, so three checks spawn the REAL CLI over a real Matroska -- rows come back with reasons on every non-confident outcome, a Japanese filename survives the pipe with no U+FFFD (this project's worst class of bug is an encoding assumption, and the corpus is Japanese), `--out` with `--no-rename` really does come back exit 2, and an empty folder really is settled. The fake is kept for the shapes a real run will not make on cue: a crash, a torn line, a child that writes nothing and dies. ⚠ WHAT IT STRUCTURALLY CANNOT COVER, per `07-test-plan.md`: macOS UX, and anything that is a claim about what a person SEES -- a check can assert the window is 2646x1647 and cannot assert the button is inside it. That is `_work/probe_3d_1_layouts.py`'s job, and its first run found three defects a green check could not: a window silently 558 px short with the counts strip off the bottom, `CUT 9.9s91% match` with no space, and CJK filenames padded by `len()` so every arrow was ragged. 🚨 THE ADVERSARIAL PASS -- two agents, 29 findings against 36 green checks and 32 killed mutants, and the worst of them were the `\"confident\"` defect REBUILT OUT OF CORRECT FIELDS: a write that FAILED read `1 synced` with needs_attention False (`pipeline` leaves the outcome CONFIDENT because the ALIGNMENT was confident, and sets `write_failed`); a DRY RUN read `1 synced`; three videos with no subtitle read *\"everything here is already in sync\"* (`--json` emits no record for an unpaired video, so this layer is STRUCTURALLY blind and the honest move is to display the CLI's own sentence -- quoting the layer that can see is not the banned thing, DECIDING from it is); a cancelled run read `3 synced` (on Windows a terminated child exits 1, indistinguishable from an honest refusal); and a repaired cut was counted twice, so ten files read as eleven. ⭐ Hence the PARTITION: `clean + cut + refused + errored + unknown == len(rows)`, asserted, plus `Row.landed` as the second question because CONFIDENT is not written. ⚠ Two lifecycle defects with nothing to do with counting: `drain()` -- whose docstring says NEVER BLOCKS -- froze for 20.00 s because both pipes reaching EOF is not the process exiting (a grandchild holds neither), so a reaper thread now posts the exit code and `drain` collects only once it has arrived; and `wait(timeout=2)` was still spinning at fifteen seconds because the timeout went to `Thread.join` and nowhere else, with every shipped check passing a timeout it never reached. 🚨 `fits()` was optimistic by 88 px -- `wm geometry` SIZES THE CLIENT AND POSITIONS THE FRAME, and it counted neither the 72 px caption nor the 16 px border nor the taskbar -- and `pin()` never called it, so a window could be pinned 995 px past the bottom of the desktop, unresizable because min == max. The tell was two instruments disagreeing: the capture harness's own check said False for the exact window `fits` approved. ⚠ And the FIX's measuring instrument was wrong the same way: `measure_chrome` returned the TOP OFFSET as the whole vertical chrome, 16 px short, caught on its first run by disagreeing with `GetSystemMetrics` -- measured (32,72) against a formula of (32,88). Neither number was trustworthy alone; the disagreement was. 🚨 `make_process_dpi_aware()` returned the NAME OF WHAT WORKED: called after a Tk root exists it still succeeds while the process stays unaware and `Scale` reads 95.8 dpi on a 1200x800 screen, and a mutant whose body called nothing survived all six DPI checks. It reads the level back out of `GetProcessDpiAwareness` now. ⭐ FIVE CHECKS COULD NOT FAIL, all one shape -- a fixture whose value is the IDENTITY ELEMENT of the operation under test: an env with no PYTHONPATH cannot see a bug in how an existing one is joined; a one-line stderr cannot see `lines[0]` where `lines[-1]` was meant; a `fits` fixture whose only failing case trips the HEIGHT term leaves the width term unguarded; every faults fixture HAD rows, so `no_rows` was False either way; and a double that dies instantly puts EOF and exit in one sweep, so the reap guard was unobservable. ⚠ And one mutant was a NO-OP rather than a survivor: restoring `proc.wait()` to `_collect` changes nothing while the guard above it holds -- it took BOTH substitutions to rebuild the historical defect. ⭐ THE WINDOW LANDED 2026-09-10 and Sonic ruled the TABLE: *\"cleanest and easiest to digest\"*, *\"auto-run on drop unless setting is toggled\"*, *\"write without confirm unless reckless toggled\"*, *\"the window must look clean as it does, and the settings organized\"*. So the main window gains nothing and every option lives in `settings.py`, in four groups -- and the PANEL IS GENERATED FROM `SCHEMA`, because `doctrine/architecture` records a control whose identifier is missing rendering perfectly and being COMPLETELY INERT, three times in one build, and a hand-written settings panel is that defect with a checkbox on it. `test_every_flagged_setting_names_a_real_argv_for_KEYWORD` asks `argv_for` for its signature rather than trusting the binding. ⭐ RECKLESS is one group, nothing in it is on by default, and while any of it IS on the app asks before writing -- today that is exactly one option, turning renaming off, which writes the new timing OVER the file the user already had. 🚨 SEVEN DEFECTS CAME FROM LOOKING AT THE SHIPPED WINDOW, past 91 green checks and 76 killed mutants, and not one was reachable by an assertion: the counts strip STARVED TO ZERO HEIGHT because a middle packed `expand=True` before it takes the whole cavity (fixed structurally -- header, footer, then the scroller -- so it cannot recur at any size); the window 1089 px tall on one run and 1647 on the NEXT with nothing changed, because releasing `pin`'s clamp hands the toplevel back to the geometry manager, AND THE CAPTURE HARNESS SAID `CAPTURES OK` TO BOTH because nothing there was watching the size; `+0.00s` on an ERROR row that was never measured (the CLI's own `-0.00s` at 3c, in a table); `✓ 4 would sync` beside `6 would sync` in one footer, because the chips PARTITION and the headline TOTALS and both were on the same strip; Browse and Sync swapped from the picture that was ruled on, because `pack(side=\"right\")` reverses creation order; a filename running into the next column's em-dash as one token, because ttk clips at the column edge with no gap -- now fitted by MEASURING the font, since a CJK character is two terminal cells and one proportional glyph of no fixed width; and this project's OWN doctrine markers leaking into prose written for a person, a hollow star mid-sentence and `*would sync*` with its asterisks showing. ⭐ That last one became a CLASS fix rather than seven instances: a static check walks `app.py` and `settings.py` with `ast` and fails on any marker or backtick in a non-docstring literal, naming the line -- plus a RUNTIME twin over the loaded schema, because a mutation setting a `why` in memory SURVIVED the static one by construction. Both, or neither. Now 93 checks, 79 mutants / 0 survivors / 0 faults, 3 controls held. ⚠ The window's own appearance is still not something this suite can speak to: `_work/probe_3d_2_look_at_the_app.py` drives the shipped app over a real 8-episode library and captures four states, and it is the only thing that has ever found these."
+      },
+      {
+        "name": "packaging",
+        "cmd": ["-m", "pytest", "tests/test_packaging.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": false,
+        "why": "Step 4a -- ⭐ IS THE THING WE SHIP THE THING WE BUILT? 🚨 IT EXISTS BECAUSE THE DATA FILES FAIL SILENTLY. `naming/alias.py::load()` fails OPEN by design -- `00-INDEX.md` Rule 1, *the alias table is an accelerator, never a dependency* -- so a wheel built without `package-data` installs cleanly, imports cleanly, runs cleanly, and is quietly far worse at the one thing that makes cross-script pairing work at all (`Hell Mode` meeting `ヘルモード ~やり込み好きの…~`). ⛔ MEASURED: settled-by-name falls 80.0% to 51.4% with the table absent -- 28.6 points of pairing quality, lost with NO error anywhere. No comment in `pyproject.toml` would have caught that; a check that opens the file does. ⭐ It asserts against the IMPORTED package rather than the repository, because the question is not *is the file in git* but *is it in the thing that got installed* -- source tree, wheel or editable install all answer the same way. Floors not exact counts (the table is regenerated by `alias --harvest` and grows), but high enough that a TRUNCATED file fails too, which is the other way this goes wrong -- a partial copy is not an empty one. ⚠ AND THE FAIL-OPEN BEHAVIOUR IS ASSERTED AS WELL: absent is survivable AND absent is worse, both true, because a check demanding the table be present would be a gate stricter than a decision the project already made (`doctrine/evidence`). ⭐ It also enforces the DEPENDENCY CLAIM rather than documenting it: `numpy` is the only hard dependency, verified by blocking anitopy/guessit/send2trash/onnxruntime/tkinterdnd2/PIL at the meta path and re-importing the package from scratch -- a bare import is not enough, because the lazy imports live inside functions and an accidental top-level one would only surface when that module is first touched. Plus: tkinter never reaches a library import, so a headless host can use it; and `__version__` may not be the `0.0.0` placeholder, since a published artifact reporting that cannot be told apart from any other build of it."
+      },
+      {
+        "name": "corpus-roundtrip",
+        "cmd": ["-m", "pytest", "tests/test_corpus_roundtrip.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 1a against REAL files. Every other suite uses fixtures written by whoever wrote the parser, so they cover the cases that person thought of. This samples the actual corpus -- files written by strangers over twenty years -- and requires a zero shift to reproduce them byte for byte. Full sweep is `python -m tsubasa.dev roundtrip --all`."
+      },
+      {
+        "name": "corpus-split",
+        "cmd": ["-m", "pytest", "tests/test_corpus_split.py", "-q", "--no-header"],
+        "hermetic": true,
+        "needsCorpus": true,
+        "why": "Step 0a. The seal, and the cross-folder leak guard: one show must land in ONE slice across every corpus folder. Went live when video-naming arrived with 148 shows that also exist in naming/."
+      }
+    ]
+  }
+}

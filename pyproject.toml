@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tsubasa"
+# ⭐ READ FROM `tsubasa/__init__.py`, never written twice. Two places holding
+# one version is one you can bump and leave stale, and `10-deployment.md`
+# rests a release proof on *the live artifact's version equals the local one*.
+dynamic = ["version"]
+description = "Pairs subtitle files to their videos and retimes them to match, by cue timing rather than text — so it works in any language."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Sonic" }]
+keywords = ["subtitles", "subtitle-sync", "srt", "ass", "anime", "japanese"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Text Processing",
+]
+
+# ⭐ ONE HARD DEPENDENCY, and that is a feature worth protecting.
+# Verified by blocking every optional import at the meta-path hook and running
+# scan() -> sync() over real media: it works with numpy alone. Everything below
+# in [optional-dependencies] is reached through a guarded lazy import and
+# degrades to a named, documented behaviour when absent.
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+# Better filename parsing on unusual release names. Absent -> our own parser
+# only, which already resolves 97.6% of the catalogue on its own.
+parsing = ["anitopy>=2.1", "guessit>=3.4"]
+# OS-native trash. Absent -> a local `.tsubasa-trash/` beside the per-user
+# cache, so a superseded file is still recoverable.
+trash = ["send2trash>=1.8"]
+# The desktop window. ⛔ NOT needed to import the library.
+gui = ["tkinterdnd2>=0.3"]
+# Audio analysis for videos that carry no subtitle track at all.
+# ⚠ Not yet wired -- RUNBOOK B6. Declared so the extra name is reserved.
+vad = ["onnxruntime>=1.16"]
+all = ["anitopy>=2.1", "guessit>=3.4", "send2trash>=1.8", "tkinterdnd2>=0.3"]
+
+[project.scripts]
+tsubasa = "tsubasa.cli:main"
+
+# ⚠ `gui_scripts`, NOT `console_scripts`. On Windows a console entry point
+# attaches a console window to the process for its whole life; this is the one
+# packaging detail that is visible to every user of the desktop app.
+[project.gui-scripts]
+tsubasa-gui = "tsubasa.gui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/OWNER/tsubasa"
+Source = "https://github.com/OWNER/tsubasa"
+Issues = "https://github.com/OWNER/tsubasa/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "tsubasa.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["tsubasa*"]
+
+# ===========================================================================
+# 🚨 THE DATA FILES ARE NOT OPTIONAL AND THEY FAIL **SILENTLY**
+# ===========================================================================
+#
+# `aliases.tsv.gz` is 4.1 MB and 221,258 entries. `naming/alias.py::load()`
+# fails OPEN by design -- `00-INDEX.md` Rule 1, *an accelerator, never a
+# dependency* -- so a wheel built without it installs cleanly, imports
+# cleanly, runs cleanly, and is quietly worse at the one thing that makes
+# cross-script pairing work.
+#
+# ⛔ MEASURED: settled-by-name drops **80.0% -> 51.4%** with the table absent.
+# That is 28.6 points of pairing quality lost with no error anywhere.
+#
+# ⭐ So the build is checked rather than trusted: `tests/test_packaging.py`
+# asserts the files are present and non-trivial, and the CI workflow builds a
+# wheel and looks inside it. A comment here would not have caught it.
+[tool.setuptools.package-data]
+tsubasa = ["data/*.tsv.gz", "data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
