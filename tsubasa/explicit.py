@@ -688,7 +688,7 @@ def _validate(index, source, video, subtitle):
                            u"the %s is not a regular file: %s" % (label, path))
 
     # -- one file cannot be both sides of its own pair ----------------------
-    if _identity(video) == _identity(subtitle):
+    if _same_file(video, subtitle):
         return Refusal(index, source, video, subtitle, "same-file",
                        u"the video and the subtitle are the same file: %s"
                        % video)
@@ -771,8 +771,45 @@ def _identity(path):
     0 on some network filesystems, where it would collide every file into one
     and refuse a whole correct manifest. A missed duplicate costs a wasted
     alignment; a false one costs the user their run.
+
+    ⛔ SECOND GAP, AND `normcase` IS THE REASON: it folds case on Windows and
+    is a **no-op on every POSIX platform**. macOS is POSIX with a
+    case-insensitive filesystem, so on a Mac this returns two different keys
+    for one file. Use `_same_file` for the pairwise question, which closes
+    both gaps; as a GROUPING key the two above still stand, and both fail in
+    the safe direction -- a duplicate is missed, never invented.
     """
     return os.path.normcase(os.path.realpath(str(path)))
+
+
+def _same_file(a, b):
+    """Are these two paths the same file? -> bool
+
+    ⚠ `_identity(a) == _identity(b)` answers NO on macOS for `A.SRT` and
+    `a.srt`, because `os.path.normcase` is a no-op on POSIX while the
+    filesystem underneath folds case anyway. **The three-OS matrix is what
+    found it**, and each OS said something different: Linux SKIPPED the check
+    (case-sensitive, so there is no fold to test), Windows passed, macOS
+    failed -- on a product that had been green on one desktop for months.
+
+    ⭐ THE STAT IS A CONFIRMATION AND NEVER THE KEY, which is what makes it
+    safe here when `_identity` rejected it. That reasoning -- `st_ino` is 0 on
+    some network filesystems, where a stat-based identity collides every file
+    into one -- still holds, so `st_ino` 0 disables this arm entirely and the
+    string comparison answers alone. A stat can only ever add a YES; it can
+    never turn a correct NO into a wrong YES.
+
+    Closing the hard-link gap for this question falls out of the same change:
+    two links to one file are one file, and refusing to pair it with itself is
+    right.
+    """
+    try:
+        sa, sb = os.stat(a), os.stat(b)
+    except OSError:
+        return _identity(a) == _identity(b)
+    if sa.st_ino and sb.st_ino and os.path.samestat(sa, sb):
+        return True
+    return _identity(a) == _identity(b)
 
 
 def _resolve_collisions(pairs):

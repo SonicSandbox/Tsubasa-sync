@@ -282,6 +282,55 @@ def test_a_case_different_path_is_still_the_SAME_file(tmp_path):
     assert kinds(plan) == ["same-file"]
 
 
+def test_the_same_file_answer_does_not_depend_on_normcase_FOLDING(tmp_path,
+                                                                  monkeypatch):
+    u"""🚨 macOS, REPRODUCED ON WHATEVER MACHINE IS READING THIS.
+
+    `os.path.normcase` folds case on Windows and is a **no-op on every POSIX
+    platform**. macOS is POSIX with a case-insensitive filesystem, so it is
+    the one place where the filesystem says *one file* and the string identity
+    says *two* — and the check above passed for months on a Windows desktop
+    while being wrong there.
+
+    ⭐ Neutering `normcase` IS that machine, so the gap is reachable without
+    owning one. The three-OS matrix found this; a check that can only be run
+    on the OS that has the bug is how it stayed hidden in the first place.
+
+    ⚠ Same shape as the UNC check two files over: **a check written on one OS
+    can encode that OS's semantics invisibly.** That one had to be taught not
+    to run elsewhere; this one had to be taught to run elsewhere. Both are the
+    same mistake seen from opposite ends.
+    """
+    s = subtitle(tmp_path, u"Show - 01.srt")
+    other = os.path.join(os.path.dirname(s), os.path.basename(s).upper())
+    if not os.path.exists(other):
+        pytest.skip("SKIP: case-sensitive filesystem -- %r does not name the "
+                    "same file as %r here, so there is no fold to test"
+                    % (os.path.basename(other), os.path.basename(s)))
+
+    # ⛔ BOTH HALVES, AND THE FIRST ATTEMPT AT THIS CHECK ONLY HAD ONE. It
+    # neutered `normcase` alone and passed against the unfixed code, which
+    # would have shipped a check that proved nothing. The reason is
+    # `ntpath.realpath`: since 3.8 it goes through `GetFinalPathNameByHandle`
+    # and hands back the file's TRUE case from disk, so on Windows the two
+    # spellings already collapse before `normcase` is consulted at all.
+    # `posixpath.realpath` resolves symlinks and `..` and leaves case alone.
+    # ⚠ `abspath` stands in for it: no input here has a symlink or a `..`.
+    monkeypatch.setattr(os.path, "realpath", lambda p, **kw: os.path.abspath(p))
+    monkeypatch.setattr(os.path, "normcase", lambda p: p)
+
+    assert X._identity(str(s)) != X._identity(other), (
+        "the positive control failed: this machine is supposed to be standing "
+        "in for macOS, where these two spellings produce different identity "
+        "keys. If they match here, the check below proves nothing")
+
+    plan = X.explicit_pairs(pair_args=[(s, other)])
+    assert kinds(plan) == ["same-file"], (
+        "with POSIX's normcase, one file read as two -- which is precisely "
+        "what macOS did, and it reported 'not-a-video' because the same-file "
+        "gate never fired")
+
+
 def test_an_unreadable_subtitle_carries_the_READERS_OWN_reason(tmp_path):
     """⚠ `.ttml` is a known subtitle extension with no reader yet. The refusal
     quotes the ladder verbatim rather than inventing a sentence."""

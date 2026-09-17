@@ -1377,11 +1377,16 @@ def test_the_detail_pane_describes_the_row_that_is_actually_selected(tmp_path):
     `selection_set` fires `<<TreeviewSelect>>` **synchronously**, so that
     writing the map after the selection would leave the first row undescribed.
     Measured: `detail_head` is empty immediately after `_add_row` and
-    populated after one `update()` — **the event is queued, not synchronous**,
-    so both lines complete before any handler runs and the ordering inside
-    `_add_row` cannot matter. The reorder stays because it is more obviously
-    correct; it is not a fix, and saying so is cheaper than a comment that
-    misleads the next reader.
+    populated once the event loop turns — **the event is queued, not
+    synchronous**, so both lines complete before any handler runs and the
+    ordering inside `_add_row` cannot matter. The reorder stays because it is
+    more obviously correct; it is not a fix, and saying so is cheaper than a
+    comment that misleads the next reader.
+
+    ⛔ AND THAT MEASUREMENT CARRIED A SECOND CLAIM THAT WAS ONLY TRUE HERE:
+    *populated after one `update()`*. One turn was enough on the build machine
+    and is not enough on a CI runner, which is a fact about this desktop, not
+    about Tk. **How many turns is not a property you get to measure once.**
     """
     root, app = _app(tmp_path)
     try:
@@ -1389,7 +1394,19 @@ def test_the_detail_pane_describes_the_row_that_is_actually_selected(tmp_path):
         app._add_row(only)
         assert app.selected_row() is only, \
             u"the row on screen does not map to the object it was built from"
-        root.update()               # ⚠ the virtual event fires HERE, not above
+        # ⛔ A DEADLINE, NOT ONE TURN OF THE LOOP. This was a single
+        # `root.update()`, on the reasoning -- correct as far as it went --
+        # that the queued event fires HERE rather than above. It does, on this
+        # machine. On a GitHub Windows runner it does not, and the check
+        # failed on a product that was working: an unmapped window defers, and
+        # one turn is a guess about scheduling dressed up as a fact about
+        # ordering. ⭐ The loop below is the same idiom this check already used
+        # twenty lines further down -- the first half simply never had it.
+        for _ in range(200):
+            root.update()
+            if only.name in app.detail_head.cget(u"text"):
+                break
+            time.sleep(0.01)
         assert only.name in app.detail_head.cget(u"text"), \
             u"the detail pane is blank for the row it just selected"
 
