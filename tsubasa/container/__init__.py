@@ -34,7 +34,7 @@ pair to be refused with a sentence naming `tsubasa setup --ffmpeg`.
 | ffmpeg missing and needed | **closed, loudly** | Silence would look like "no subtitles in this video" |
 | A file that is genuinely not a container | **closed** | Naming what was found, not what was wanted |
 | A Matroska track list cut off, damaged, or absent | **open** -> ffmpeg | 🚨 RUNBOOK 3f: it read as "no tracks" -- 582 of 588 truncations of a real file. The native reader raises now |
-| A Matroska file that ends before its Segment does | **OK, and `incomplete` says so** | A download in progress. Readers that can use what is there still may; a header-only answer about it may not (`embedded_subtitles`) |
+| A Matroska file that ends before its Segment does | **OK, and `incomplete` says so** | A download in progress. Readers that can use what is there still may; a header-only answer about it may not (`embedded_subs`) |
 
 🚨 And the distinction this project has shipped wrong twice: **a container
 with no subtitle tracks is `OK` with an empty list, NOT an error.** 37.5% of a

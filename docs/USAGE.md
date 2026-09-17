@@ -269,7 +269,7 @@ tsubasa.parse_subtitle_name("Show - 01.ja[cc].srt")
 **The subtitle tracks inside a video** *(0.1.3)*:
 
 ```python
-subs = tsubasa.embedded_subtitles("Show - 01.mkv", lang="ja")
+subs = tsubasa.embedded_subs("Show - 01.mkv", lang="ja")
 if not subs.ok:
     print("could not read it:", subs.reason)      # NOT the same as "no tracks"
 elif any(t.text and not t.forced for t in subs.tracks):
@@ -292,7 +292,7 @@ for track in subs.tracks if subs.ok else []:
   `ja`); a track that states no language reads `en`, which is Matroska's default.
 - It reads the file's header only. Matroska needs nothing else; other containers need ffmpeg,
   and without it the answer is `ok=False` with a reason.
-- Don't write `if tsubasa.embedded_subtitles(video):` — it raises, because the answer is not
+- Don't write `if tsubasa.embedded_subs(video):` — it raises, because the answer is not
   a yes or no.
 
 → [`examples/find_missing_subtitles.py`](../examples/find_missing_subtitles.py)

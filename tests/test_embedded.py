@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-`tsubasa.embedded_subtitles()` -- the subtitle tracks INSIDE a video. RUNBOOK 3f.
+`tsubasa.embedded_subs()` -- the subtitle tracks INSIDE a video. RUNBOOK 3f.
 
 ⭐ THE CLAIM UNDER TEST
 
@@ -149,7 +149,7 @@ def _by_index(subs):
 # ===========================================================================
 
 def test_every_subtitle_track_is_reported_with_its_CONTAINER_index_and_fields(tmp_path):
-    subs = tsubasa.embedded_subtitles(_mkv(tmp_path / "v.mkv", SHAPES))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", SHAPES))
     assert subs.ok and subs.reason == u"", subs
     got = _by_index(subs)
     # ⚠ 2, 3, 4, 5 -- NOT 0, 1, 2, 3 (place among subtitles) and NOT
@@ -171,7 +171,7 @@ def test_every_subtitle_track_is_reported_with_its_CONTAINER_index_and_fields(tm
 
 def test_a_readable_video_with_NO_subtitle_track_is_ok_and_empty(tmp_path, no_ffmpeg):
     u"""⭐ 37.5% of a real library (`08-probes.md` §E). Not an error."""
-    subs = tsubasa.embedded_subtitles(_mkv(tmp_path / "v.mkv", [VIDEO, AUDIO]))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", [VIDEO, AUDIO]))
     assert subs.ok, subs
     assert subs.tracks == []
 
@@ -183,7 +183,7 @@ def test_an_unreadable_video_is_NOT_a_video_with_no_tracks(tmp_path):
     empty.write_bytes(b"")
     for path, said in ((empty, u"0 bytes"),
                        (tmp_path / "missing.mkv", u"no such file")):
-        subs = tsubasa.embedded_subtitles(path)
+        subs = tsubasa.embedded_subs(path)
         assert subs.ok is False, subs
         assert said in subs.reason, subs.reason
         with pytest.raises(ValueError) as raised:
@@ -216,7 +216,7 @@ def test_a_DAMAGED_track_list_is_unreadable_not_short(tmp_path, no_ffmpeg):
     for label, data in cases.items():
         path = tmp_path / ("%d.mkv" % ran)
         path.write_bytes(data)
-        subs = tsubasa.embedded_subtitles(path)
+        subs = tsubasa.embedded_subs(path)
         assert subs.ok is False, (label, subs)
         assert subs.reason, label
         with pytest.raises(ValueError):
@@ -256,18 +256,18 @@ def test_a_file_CUT_OFF_or_still_downloading_is_unreadable(tmp_path, no_ffmpeg):
     live_boundary = tmp_path / "live_boundary.mkv"
     live_boundary.write_bytes(unknown[:boundary])
     for path in (inside, after, live, live_boundary):
-        subs = tsubasa.embedded_subtitles(path)
+        subs = tsubasa.embedded_subs(path)
         assert subs.ok is False, (path.name, subs)
-    assert u"incomplete" in tsubasa.embedded_subtitles(after).reason
+    assert u"incomplete" in tsubasa.embedded_subs(after).reason
     for path in (live, live_boundary):
-        assert u"track list" in tsubasa.embedded_subtitles(path).reason, path.name
+        assert u"track list" in tsubasa.embedded_subs(path).reason, path.name
 
 
 def test_the_result_refuses_to_be_read_as_a_yes_or_no(tmp_path):
-    u"""⛔ `if tsubasa.embedded_subtitles(video):` would be true for every video
+    u"""⛔ `if tsubasa.embedded_subs(video):` would be true for every video
     -- an object is truthy -- and a fetcher written that way skips every fetch."""
-    readable = tsubasa.embedded_subtitles(_mkv(tmp_path / "v.mkv", [VIDEO]))
-    unreadable = tsubasa.embedded_subtitles(tmp_path / "missing.mkv")
+    readable = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", [VIDEO]))
+    unreadable = tsubasa.embedded_subs(tmp_path / "missing.mkv")
     for subs in (readable, unreadable):
         with pytest.raises(TypeError) as raised:
             bool(subs)
@@ -281,11 +281,11 @@ def test_the_result_refuses_to_be_read_as_a_yes_or_no(tmp_path):
 def test_lang_asks_the_same_question_however_Japanese_is_spelled(tmp_path):
     path = _mkv(tmp_path / "v.mkv", SHAPES)
     for spelling in (u"ja", u"jpn", u"JA", u"ja-JP"):
-        subs = tsubasa.embedded_subtitles(path, lang=spelling)
+        subs = tsubasa.embedded_subs(path, lang=spelling)
         assert subs.lang == u"ja", (spelling, subs.lang)
         assert sorted(t.index for t in subs.tracks) == [2, 3], spelling
-    assert [t.index for t in tsubasa.embedded_subtitles(path, lang="en").tracks] == [4]
-    assert [t.index for t in tsubasa.embedded_subtitles(path, lang="und").tracks] == [5]
+    assert [t.index for t in tsubasa.embedded_subs(path, lang="en").tracks] == [4]
+    assert [t.index for t in tsubasa.embedded_subs(path, lang="und").tracks] == [5]
 
 
 def test_an_unrecognised_lang_RAISES_rather_than_matching_nothing(tmp_path):
@@ -295,7 +295,7 @@ def test_an_unrecognised_lang_RAISES_rather_than_matching_nothing(tmp_path):
     tried = 0
     for typo in (u"japanese", u"jp", u"ja_JP"):
         with pytest.raises(ValueError) as raised:
-            tsubasa.embedded_subtitles(path, lang=typo)
+            tsubasa.embedded_subs(path, lang=typo)
         assert typo in (u"%s" % raised.value), raised.value
         tried += 1
     assert tried == 3
@@ -314,7 +314,7 @@ def test_BCP47_wins_and_a_region_or_script_does_not_hide_the_language(tmp_path):
         (5, W.SUB, u"S_TEXT/ASS", u"qaa", None, False, True, u""),
         (6, W.SUB, u"S_TEXT/ASS", None, u"ja", False, True, u""),
     ])
-    got = _by_index(tsubasa.embedded_subtitles(path))
+    got = _by_index(tsubasa.embedded_subs(path))
     assert (got[1].lang, got[1].tag) == (u"ja", u"ja-JP"), got[1]
     assert got[2].lang == u"ja", got[2].tag
     assert got[3].lang == u"zh", got[3].tag
@@ -332,7 +332,7 @@ def test_an_ABSENT_or_EMPTY_element_reads_as_Matroskas_default(tmp_path):
         (3, W.SUB, u"S_TEXT/UTF8", EMPTY, None, False, EMPTY, u""),
     ])
     assert container.read(path, timing=False).subtitle_tracks[0].language == u"eng"
-    got = _by_index(tsubasa.embedded_subtitles(path))
+    got = _by_index(tsubasa.embedded_subs(path))
     for index in (1, 2):
         track = got[index]
         assert (track.lang, track.tag, track.default) == (u"en", u"eng", True), track
@@ -385,7 +385,7 @@ def test_a_DVB_or_unrecognised_track_is_never_reported_as_text(tmp_path):
         (3, W.SUB, u"S_KATE", u"jpn", None, False, True, u""),
         (4, W.SUB, u"S_VOBSUB/ZLIB", u"jpn", None, False, True, u""),
     ])
-    got = _by_index(tsubasa.embedded_subtitles(path, lang="ja"))
+    got = _by_index(tsubasa.embedded_subs(path, lang="ja"))
     assert (got[1].text, got[1].bitmap) == (False, True), got[1]
     assert (got[2].text, got[2].bitmap) == (False, False), got[2]
     assert (got[3].text, got[3].bitmap) == (False, True), got[3]
@@ -463,14 +463,14 @@ def test_the_ffmpeg_rung_maps_forced_default_language_and_kind_like_the_tool_say
     u"""(adversary) `forced` dropped and `eng` invented on this rung SURVIVED
     every check on a machine without ffprobe -- and MP4 always comes this way,
     so a forced Japanese track read as unforced makes hato skip."""
-    subs = tsubasa.embedded_subtitles(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
     assert subs.ok, subs.reason
     assert _answer(subs) == EXPECTED, _answer(subs)
 
 
 def test_the_native_reader_agrees_with_the_RECORDED_tool_on_the_same_file(tmp_path, no_ffmpeg):
     u"""⭐ Reader parity on every machine, not only one with ffprobe."""
-    subs = tsubasa.embedded_subtitles(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
     assert subs.ok, subs.reason
     assert _answer(subs) == EXPECTED, _answer(subs)
 
@@ -498,7 +498,7 @@ def test_a_damaged_file_ffmpeg_reads_as_EMPTY_is_still_unreadable(tmp_path, monk
     path.write_bytes(_bytes(SHAPES, entries=b"\x00" * 4 + first[4:] + second))
     info = container.read(str(path), timing=False)
     assert info.ok and info.reader == "ffmpeg" and info.tracks == [], info
-    subs = tsubasa.embedded_subtitles(path)
+    subs = tsubasa.embedded_subs(path)
     assert subs.ok is False, subs
     assert u"no track of any kind" in subs.reason and u"0x00 at pos" in subs.reason, subs.reason
 
@@ -509,7 +509,7 @@ def test_an_incomplete_file_is_unreadable_on_the_ffmpeg_rung_too(tmp_path, recor
     header, whichever rung answered."""
     path = tmp_path / "cut.mkv"
     path.write_bytes(_bytes(RECORDED_TRACKS)[:-3])
-    subs = tsubasa.embedded_subtitles(path)
+    subs = tsubasa.embedded_subs(path)
     assert subs.ok is False and u"incomplete" in subs.reason, subs
 
 
@@ -537,7 +537,7 @@ def test_it_reads_the_HEADER_and_never_a_cluster(tmp_path, monkeypatch):
         return info
 
     monkeypatch.setattr(container, "read", counted)
-    subs = tsubasa.embedded_subtitles(path)
+    subs = tsubasa.embedded_subs(path)
     assert subs.ok, subs.reason
     assert sorted(t.index for t in subs.tracks) == [2, 3, 4, 5]
     assert len(seen) == 1, seen
@@ -549,7 +549,7 @@ def test_it_reads_the_HEADER_and_never_a_cluster(tmp_path, monkeypatch):
 
 def test_garbage_after_the_track_list_does_not_stop_it(tmp_path):
     garbage = b"\x1f\x43\xb6\x75" + b"\x01\xff\xff\xff\xff\xff\xff\xff" + b"\x00" * 64
-    subs = tsubasa.embedded_subtitles(_mkv(tmp_path / "v.mkv", SHAPES, tail=garbage))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", SHAPES, tail=garbage))
     assert subs.ok, subs.reason
     assert sorted(t.index for t in subs.tracks) == [2, 3, 4, 5]
 
@@ -557,13 +557,13 @@ def test_garbage_after_the_track_list_does_not_stop_it(tmp_path):
 def test_a_bytes_path_names_the_same_file(tmp_path):
     u"""(adversary) It came back `no such file: b'C:\\\\...'`."""
     path = _mkv(tmp_path / "v.mkv", SHAPES)
-    as_bytes = tsubasa.embedded_subtitles(os.fsencode(path))
+    as_bytes = tsubasa.embedded_subs(os.fsencode(path))
     assert as_bytes.ok, as_bytes.reason
-    assert _answer(as_bytes) == _answer(tsubasa.embedded_subtitles(Path(path)))
+    assert _answer(as_bytes) == _answer(tsubasa.embedded_subs(Path(path)))
 
 
 def test_it_is_exported_as_a_compatibility_promise():
-    for name in (u"embedded_subtitles", u"EmbeddedSubtitles", u"EmbeddedSubtitle"):
+    for name in (u"embedded_subs", u"EmbeddedSubtitles", u"EmbeddedSubtitle"):
         assert name in tsubasa.__all__, name
         assert getattr(tsubasa, name) is getattr(E, name), name
 
@@ -590,7 +590,7 @@ def test_both_readers_give_the_same_answer_for_the_same_file(tmp_path, ffprobe, 
     is the native reader being right, not a disagreement to paper over."""
     path = _mkv(tmp_path / "v.mkv", RECORDED_TRACKS)
     monkeypatch.delenv("TSUBASA_NO_NATIVE_DEMUX", raising=False)
-    native = _answer(tsubasa.embedded_subtitles(path))
+    native = _answer(tsubasa.embedded_subs(path))
     monkeypatch.setenv("TSUBASA_NO_NATIVE_DEMUX", "1")
-    through_ffmpeg = _answer(tsubasa.embedded_subtitles(path))
+    through_ffmpeg = _answer(tsubasa.embedded_subs(path))
     assert native == through_ffmpeg == EXPECTED, (native, through_ffmpeg)

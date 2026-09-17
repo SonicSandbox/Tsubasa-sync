@@ -21,7 +21,7 @@ tsubasa):
     r     = sync_to_reference(sub, other_sub)   # a subtitle against a subtitle
     data  = render(r).data                      # retimed bytes; caller writes
     side  = parse_subtitle_name("Show.ja[cc].srt")   # stem, lang, tag, flags
-    subs  = embedded_subtitles(video, lang="ja")     # tracks INSIDE the video
+    subs  = embedded_subs(video, lang="ja")     # tracks INSIDE the video
 
 ⚠ THESE NAMES ARE A COMPATIBILITY PROMISE (spec/RUNBOOK.md step 3b). hato pins
 four shapes through them -- the parser, discovery, the sidecar reader and
@@ -74,7 +74,7 @@ from .pipeline import (Rendered, SyncReport, render,           # noqa: E402,F401
 from .selfcheck import SelfCheck, self_check                   # noqa: E402,F401
 # ⭐ 0.1.3 (RUNBOOK 3f): the embedded-track check hato's read rule opens with.
 from .embedded import (EmbeddedSubtitle, EmbeddedSubtitles,    # noqa: E402,F401
-                       embedded_subtitles)
+                       embedded_subs)
 # ⭐ The sidecar reader was already one of the four frozen shapes hato pins; it
 # was reachable only as `tsubasa.sidecar.parse`, which reads like an internal.
 from .sidecar import Sidecar                                   # noqa: E402,F401
@@ -86,4 +86,4 @@ __all__ = ["align", "scan", "sync", "set_ffmpeg", "Result", "Scan",
            "self_check", "SelfCheck", "sync_to_reference", "render",
            "Rendered", "parse_subtitle_name", "Sidecar",
            # added 0.1.3 (RUNBOOK 3f) -- never renamed
-           "embedded_subtitles", "EmbeddedSubtitles", "EmbeddedSubtitle"]
+           "embedded_subs", "EmbeddedSubtitles", "EmbeddedSubtitle"]

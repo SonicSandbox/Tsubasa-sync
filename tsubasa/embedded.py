@@ -2,7 +2,7 @@
 u"""
 The subtitle tracks a video file carries INSIDE it. RUNBOOK 3f.
 
-    subs = tsubasa.embedded_subtitles("Show - 01.mkv", lang="ja")
+    subs = tsubasa.embedded_subs("Show - 01.mkv", lang="ja")
     if not subs.ok:
         ...          # could not tell -- NOT "there are none"; subs.reason says why
     elif any(t.text and not t.forced for t in subs.tracks):
@@ -22,7 +22,7 @@ internals.
 | ⛔ **An unrecognised codec is not text** | `text` and `bitmap` are both False for a codec neither list in `container/` names. A bitmap track called text makes a fetcher skip a download the user needed; the reverse costs one download |
 | **Forced is reported, never filtered** | A forced track is signs only. Whether that counts is the caller's rule -- hato's is *"A forced sub is not a full sub"* |
 
-⛔ And the result is not a yes/no. `if tsubasa.embedded_subtitles(video):` would
+⛔ And the result is not a yes/no. `if tsubasa.embedded_subs(video):` would
 be true for EVERY video -- an object is truthy -- and a fetcher written that way
 skips every fetch. So truth-testing it raises and says what to ask instead.
 """
@@ -32,7 +32,7 @@ from . import container as _container
 from . import sidecar as _sidecar
 from .api import _language_asked_for
 
-__all__ = ["embedded_subtitles", "EmbeddedSubtitles", "EmbeddedSubtitle"]
+__all__ = ["embedded_subs", "EmbeddedSubtitles", "EmbeddedSubtitle"]
 
 
 class EmbeddedSubtitle(object):
@@ -113,7 +113,7 @@ class EmbeddedSubtitles(object):
 
     def __bool__(self):
         raise TypeError(
-            u"embedded_subtitles() is not a yes/no answer, and every result "
+            u"embedded_subs() is not a yes/no answer, and every result "
             u"would read as yes. Ask `.ok` whether the video could be read, "
             u"then look at `.tracks` -- e.g. `any(t.text and not t.forced "
             u"for t in subs.tracks)`.")
@@ -128,7 +128,7 @@ class EmbeddedSubtitles(object):
             u" in %s" % self.lang if self.lang else u"")
 
 
-def embedded_subtitles(video, lang=None):
+def embedded_subs(video, lang=None):
     u"""The subtitle tracks inside `video`. -> `EmbeddedSubtitles`
 
     Never raises for a video it cannot read -- that is `ok=False` with the

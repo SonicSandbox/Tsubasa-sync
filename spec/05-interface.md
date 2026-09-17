@@ -306,7 +306,7 @@ scan.unpaired(lang="ja")                      # videos with no JAPANESE subtitle
 r = tsubasa.sync_to_reference(sub, other_sub) # a subtitle against a subtitle. Writes nothing
 out = tsubasa.render(r)                       # the retimed bytes, original encoding
 side = tsubasa.parse_subtitle_name("Show.ja[cc].srt")   # the sidecar reader, by name
-subs = tsubasa.embedded_subtitles(video, lang="ja")     # tracks INSIDE the video (0.1.3)
+subs = tsubasa.embedded_subs(video, lang="ja")     # tracks INSIDE the video (0.1.3)
 ```
 
 | Added | Why it had to exist |
@@ -319,7 +319,7 @@ subs = tsubasa.embedded_subtitles(video, lang="ja")     # tracks INSIDE the vide
 | `render(result, force=False)` → `Rendered` | The retimed bytes for any `Result`, through the renderer `sync(write=True)` uses: original encoding, cut-straddling cues anchored to their start, both whitelisted removals counted. ⛔ A path the caller names is where `os.replace` destroys a file, so this returns bytes and the caller writes |
 | `parse_subtitle_name` · `Sidecar` | The sidecar reader was already one of hato's four frozen shapes, reachable only as `tsubasa.sidecar.parse` |
 | `tsubasa/__pyinstaller/` | Registered under the `pyinstaller40` entry point, so an application freezing tsubasa changes nothing in its own build. The same build that carried 0 entries carried 221,258. ⚠ **PyInstaller only** — `self_check()` is how any other freezer finds out |
-| `embedded_subtitles(video, lang=None)` → `EmbeddedSubtitles` of `EmbeddedSubtitle` — **0.1.3, RUNBOOK 3f** | hato's read rule opens with *"a video with an embedded Japanese text track already has its subtitle"*, and the track list was reachable only through `container`. ⛔ **Could not read is not "has none":** `ok=False` with the reader's reason, and `.tracks` raises — including a Matroska file cut off or still downloading, and one whose track list is damaged (an adversarial pass found 582 of 588 truncations of a real file reading as *"no tracks"*). ⛔ **Not a yes/no:** truth-testing the result raises, because an object is always truthy and `if embedded_subtitles(video):` would skip every fetch. ⭐ `text` and `bitmap` are KNOWN lists, both False for an unrecognised codec — a bitmap track called text skips a fetch somebody needed. `index` is the container-wide position; `lang` resolves as `unpaired(lang=)` does; `forced` is reported, not filtered. Header-only: a Matroska file costs a few hundred bytes |
+| `embedded_subs(video, lang=None)` → `EmbeddedSubtitles` of `EmbeddedSubtitle` — **0.1.3, RUNBOOK 3f** | hato's read rule opens with *"a video with an embedded Japanese text track already has its subtitle"*, and the track list was reachable only through `container`. ⛔ **Could not read is not "has none":** `ok=False` with the reader's reason, and `.tracks` raises — including a Matroska file cut off or still downloading, and one whose track list is damaged (an adversarial pass found 582 of 588 truncations of a real file reading as *"no tracks"*). ⛔ **Not a yes/no:** truth-testing the result raises, because an object is always truthy and `if embedded_subs(video):` would skip every fetch. ⭐ `text` and `bitmap` are KNOWN lists, both False for an unrecognised codec — a bitmap track called text skips a fetch somebody needed. `index` is the container-wide position; `lang` resolves as `unpaired(lang=)` does; `forced` is reported, not filtered. Header-only: a Matroska file costs a few hundred bytes |
 
 ---
 
