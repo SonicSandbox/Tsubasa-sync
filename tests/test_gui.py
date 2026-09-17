@@ -207,10 +207,18 @@ def _tk_root():
     environmental rather than tsubasa's, and a user's app makes exactly one
     root per launch.
 
-    So a transient library-read failure is RETRIED, and says so with a
-    warning when it had to be. Nothing else is dressed up as a skip: a
-    missing display skips, and every other failure to start Tk FAILS with
-    Tcl's own message.
+    So a failure to START is RETRIED, and says so with a warning when it had
+    to be. Nothing is dressed up as a skip: a missing display skips at once,
+    and a start that fails every attempt FAILS with Tcl's own message.
+
+    🚨 THE FIRST VERSION RETRIED ONE MESSAGE, AND CI MET ANOTHER — 0.1.2.
+    It retried only *"Can't find a usable"* + *"couldn't read file"*, the
+    shape measured here. `windows-latest · py3.10` then failed one test with
+    **"Tk could not start (1 attempt)"** while every other root in the same
+    job started — transient, a different wording. ⛔ AND ITS TEXT WAS LOST:
+    the message put Tcl's words on a second line, and the CI reporter
+    annotates only the first line of each failure (deliberately, so the test
+    NAMES survive). So every message here is ONE line.
     """
     import warnings
     tk = pytest.importorskip(u"tkinter")
@@ -219,22 +227,96 @@ def _tk_root():
         try:
             root = tk.Tk()
         except tk.TclError as exc:
-            message = u"%s" % exc
-            if u"Can't find a usable" in message and \
-                    u"couldn't read file" in message:
-                time.sleep(0.05 * attempt)
-                continue
-            break
+            message = u" | ".join(line.strip() for line in
+                                  (u"%s" % exc).splitlines() if line.strip())
+            if u"display" in message.lower():
+                break
+            time.sleep(0.05 * attempt)
+            continue
         if attempt > 1:
             warnings.warn(u"Tk started on attempt %d, after a transient "
-                          u"failure to read its own library: %s"
-                          % (attempt, [l for l in message.splitlines()
-                                       if u"couldn't read file" in l][:1]))
+                          u"failure to start: %s" % (attempt, message[:300]))
         return root
     if u"display" in message.lower():
-        pytest.skip(u"no display: %s" % message.splitlines()[0])
-    pytest.fail(u"Tk could not start (%d attempt%s):\n%s"
+        pytest.skip(u"no display: %s" % message)
+    pytest.fail(u"Tk could not start (%d attempt%s): %s"
                 % (attempt, u"" if attempt == 1 else u"s", message))
+
+
+# ⭐ THE HELPER IS AN INSTRUMENT, SO IT IS CHECKED LIKE ONE. Tk's own flake
+# cannot be summoned on demand, so these hand `_tk_root` a Tk that fails the
+# way Tcl does — and each was watched go red against the helper it guards.
+
+def test_tk_root_RETRIES_a_start_failure_and_says_so_on_one_line(monkeypatch):
+    tk = pytest.importorskip(u"tkinter")
+    calls, root = [], object()
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            # ⚠ NOT the "couldn't read file" wording the first version keyed
+            # on — a start failure worded differently still has to be retried.
+            raise tk.TclError(u"Can't find a usable init.tcl in the following "
+                              u"directories:\n    {C:/x/tcl/tcl8.6}\n\nThis "
+                              u"probably means that Tcl wasn't installed "
+                              u"properly.")
+        return root
+
+    monkeypatch.setattr(tk, "Tk", flaky)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    with pytest.warns(UserWarning) as caught:
+        assert _tk_root() is root
+    assert len(calls) == 3, calls
+    said = u"%s" % caught[0].message
+    assert u"attempt 3" in said and u"init.tcl" in said, said
+    assert u"\n" not in said, said
+
+
+def test_tk_root_FAILS_with_Tcls_whole_message_on_the_FIRST_line(monkeypatch):
+    u"""🚨 The CI reporter annotates the first line of a failure and nothing
+    else. A message whose first line ends *"(1 attempt):"* is a failure nobody
+    without credentials can read — which is exactly what CI produced."""
+    tk = pytest.importorskip(u"tkinter")
+    calls = []
+
+    def broken():
+        calls.append(1)
+        raise tk.TclError(u'invalid command name "tcl_findLibrary"\n'
+                          u'    while executing\n"tcl_findLibrary tk"')
+
+    monkeypatch.setattr(tk, "Tk", broken)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    # ⛔ NOT `pytest.raises(pytest.fail.Exception)` alone: were the helper to
+    # SKIP — the original defect — the skip would pass straight through it and
+    # this check would report as skipped, not failed. A skip is not a pass.
+    try:
+        _tk_root()
+    except pytest.fail.Exception as exc:
+        failed = exc
+    except pytest.skip.Exception as exc:
+        raise AssertionError(u"a failure to start Tk was SKIPPED: %s" % exc.msg)
+    else:
+        raise AssertionError(u"a Tk that never starts produced no failure")
+    assert len(calls) == TK_START_ATTEMPTS, calls
+    first = (u"%s" % failed.msg).splitlines()[0]
+    assert u"%d attempts" % TK_START_ATTEMPTS in first, first
+    assert u"tcl_findLibrary" in first and u"while executing" in first, first
+
+
+def test_tk_root_SKIPS_at_once_for_a_missing_display(monkeypatch):
+    tk = pytest.importorskip(u"tkinter")
+    calls = []
+
+    def headless():
+        calls.append(1)
+        raise tk.TclError(u"no display name and no $DISPLAY environment "
+                          u"variable")
+
+    monkeypatch.setattr(tk, "Tk", headless)
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _tk_root()
+    assert len(calls) == 1, calls
+    assert u"$DISPLAY" in (u"%s" % skipped.value.msg), skipped.value.msg
 
 
 # ===========================================================================
