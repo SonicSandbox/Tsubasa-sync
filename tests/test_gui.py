@@ -1239,6 +1239,65 @@ def test_the_window_opens_at_the_size_it_was_built_to_be(tmp_path):
 
 @pytest.mark.skipif(not sys.platform.startswith("win"),
                     reason=u"needs a display")
+def test_the_window_still_WORKS_on_a_small_screen_it_has_to_clamp_to(tmp_path,
+                                                                    monkeypatch):
+    u"""🚨 THE SCREEN THE AUTHOR OWNS IS A CONFIGURATION, NOT A CONSTANT.
+
+    This machine is **3000x2000 at 239.6 dpi**. A GitHub Windows runner is
+    **1024x768 at 96**, and the window asks for 1060 design px — so it clamps
+    there and never clamps here. ⛔ Every check in this file ran for weeks
+    against the one screen that makes clamping unreachable, and the clamp path
+    broke a sibling check on six runners at once.
+
+    ⭐ So the runner's geometry is pinned here as a supported configuration.
+    `Scale` takes `dpi`, `screen`, `area` and `chrome` as arguments precisely
+    so it can be asked about a machine that is not this one.
+
+    ⚠ **AND THE FIRST SIMULATION OF IT WAS WRONG IN A WAY THAT INVENTED A
+    DEFECT.** Patching only `work_area` to 1024x768 left this machine's 2.496
+    ratio in place, so 1060 design px still meant 2646 real ones: the window
+    came out **381 px wide**, controls fell off it, and a second check
+    'failed'. It was an artifact — CI had reported no such failure, and at the
+    runner's real ratio of 1.0 the window is 968x660 and everything fits.
+    **A simulation that is harsher than the thing it simulates manufactures
+    work.** Both halves have to be faithful, not just the one you thought of.
+    """
+    real_init = SCALE.Scale.__init__
+
+    def as_a_runner(self, root, dpi=None, screen=None, area=None, chrome=None):
+        real_init(self, root, dpi=96.0, screen=(1024, 768),
+                  area=(0, 0, 1024, 768), chrome=(16, 39))
+
+    monkeypatch.setattr(SCALE.Scale, u"__init__", as_a_runner)
+    root, app = _app(tmp_path)
+    try:
+        root.update()
+        assert app.pin.clamped, (
+            u"1060 design px at ratio 1.0 plus frame does not fit 1024 of "
+            u"work area, so this must clamp — if it stopped clamping, this "
+            u"check is no longer standing where it thinks it is")
+        assert app.message and u"clamped" in app.message, (
+            u"it clamped and did not say so: %r" % app.message)
+
+        # ⛔ CLAMPED IS NOT THE SAME AS USABLE, and clamping correctly while
+        # putting a control off the edge is the defect `pin` exists to stop.
+        for widget, name in ((app.browse_btn, u"Browse"),
+                             (app.sync_btn, u"Sync"),
+                             (app.dry_chk, u"Dry run"),
+                             (app.settings_btn, u"Settings")):
+            assert widget.winfo_ismapped(), \
+                u"%s is off a clamped %dx%d window" % (
+                    name, app.pin.width, app.pin.height)
+
+        assert app.pin.width <= 1024 and app.pin.height <= 768, \
+            u"clamped to %dx%d, which is larger than the screen" % (
+                app.pin.width, app.pin.height)
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
 def test_the_controls_are_in_the_order_that_was_RULED(tmp_path):
     u"""⭐ `Browse…  Sync  Dry run  ⚙`, left to right.
 
@@ -1383,10 +1442,13 @@ def test_the_detail_pane_describes_the_row_that_is_actually_selected(tmp_path):
     more obviously correct; it is not a fix, and saying so is cheaper than a
     comment that misleads the next reader.
 
-    ⛔ AND THAT MEASUREMENT CARRIED A SECOND CLAIM THAT WAS ONLY TRUE HERE:
-    *populated after one `update()`*. One turn was enough on the build machine
-    and is not enough on a CI runner, which is a fact about this desktop, not
-    about Tk. **How many turns is not a property you get to measure once.**
+    ⛔ AND THE CHECK STILL ASSUMED SOMETHING TRUE ONLY ON THIS DESKTOP: that
+    the head belongs to the selected row. It belongs to `self.message` first,
+    and a window clamped to fit the screen sets one. **This machine is
+    3000x2000 and never clamps; a GitHub Windows runner is 1024x768 and always
+    does**, so the check failed on six runners against a product doing exactly
+    what it was built to do. The screen the author happens to own is a
+    configuration, not a constant.
     """
     root, app = _app(tmp_path)
     try:
@@ -1394,19 +1456,34 @@ def test_the_detail_pane_describes_the_row_that_is_actually_selected(tmp_path):
         app._add_row(only)
         assert app.selected_row() is only, \
             u"the row on screen does not map to the object it was built from"
-        # ⛔ A DEADLINE, NOT ONE TURN OF THE LOOP. This was a single
-        # `root.update()`, on the reasoning -- correct as far as it went --
-        # that the queued event fires HERE rather than above. It does, on this
-        # machine. On a GitHub Windows runner it does not, and the check
-        # failed on a product that was working: an unmapped window defers, and
-        # one turn is a guess about scheduling dressed up as a fact about
-        # ordering. ⭐ The loop below is the same idiom this check already used
-        # twenty lines further down -- the first half simply never had it.
-        for _ in range(200):
-            root.update()
-            if only.name in app.detail_head.cget(u"text"):
-                break
-            time.sleep(0.01)
+        root.update()               # ⚠ the virtual event fires HERE, not above
+
+        # ===================================================================
+        # ⛔ THE DETAIL PANE IS SHARED, AND ON A SMALL SCREEN IT IS TAKEN
+        # ===================================================================
+        # `_paint_detail` gives the head to `self.message` whenever there is
+        # one, and `__init__` sets one when the window had to be CLAMPED to
+        # fit the work area. A GitHub Windows runner is **1024x768** and the
+        # window asks for 1060 wide, so on CI a message is ALWAYS showing and
+        # the head is blank **by design** — the product was behaving
+        # correctly and this check called it a blank pane.
+        #
+        # ⚠ The first attempt at a fix pumped the event loop to a deadline, on
+        # the theory that the queued `<<TreeviewSelect>>` was not being
+        # delivered. It was being delivered the whole time. Two seconds of
+        # turning the loop changed nothing, which is what said the theory was
+        # wrong — a fix that does not work is evidence, and it was cheaper
+        # than the reasoning that produced it.
+        #
+        # ⭐ So the note is cleared, and ASSERTED before it is cleared, so that
+        # clearing it can never quietly become a way to hide a real message.
+        if app.message:
+            assert app.pin.clamped, (
+                u"a message is showing and it is not the window-clamp note, "
+                u"so something else went wrong: %r" % app.message)
+            app.message = u""
+            app._repaint()
+
         assert only.name in app.detail_head.cget(u"text"), \
             u"the detail pane is blank for the row it just selected"
 
