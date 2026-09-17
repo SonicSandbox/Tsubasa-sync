@@ -52,7 +52,8 @@ from .naming import decoration as _decoration
 OPTIONAL = (
     (u"anitopy", u"a second opinion on unusual release names"),
     (u"guessit", u"a third opinion on unusual release names"),
-    (u"send2trash", u"the OS trash, instead of a local .tsubasa-trash/ folder"),
+    (u"send2trash", u"the OS trash and uses a local .tsubasa-trash/ folder "
+                    u"instead"),
 )
 
 #: The consequence of a missing alias table, in the one place it is stated.

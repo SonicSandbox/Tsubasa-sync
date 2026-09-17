@@ -54,6 +54,28 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python run_tests.py
 
+      # ⭐ THE USAGE GUIDE IS EXECUTED, NOT TRUSTED. Every example in examples/
+      # builds its own demo data and must run to completion, and the guide's
+      # prose is checked against the installed API. ⚠ Running the examples
+      # the first time found three defects no suite had: a crash on a Result
+      # whose subtitle is None, segments explained backwards, and a demo name
+      # that did not pair because it was not the show's real title.
+      - name: Run the examples, and check the guide against the API
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          for example in examples/*.py; do
+            echo "::group::$example"
+            python "$example" || {
+              echo "::error title=example failed::$example exited non-zero"
+              exit 1
+            }
+            echo "::endgroup::"
+          done
+          python .github/scripts/check_docs.py
+
       # =====================================================================
       # 🚨 PUT THE FAILURE WHERE IT CAN BE READ WITHOUT CREDENTIALS
       # =====================================================================
@@ -142,9 +164,10 @@ jobs:
           if len(found) > 25:
               lines.append("...and %d more" % (len(found) - 25))
           if not lines:
-              lines = ["the suite exited non-zero with no failing testcase in "
-                       "any JUnit XML -- a collection error, or the runner "
-                       "itself. Look at the log tails."]
+              lines = ["no failing testcase in any JUnit XML. If the suite "
+                       "step passed, a LATER step failed -- the examples or "
+                       "the guide check name themselves above. Otherwise a "
+                       "collection error or the runner itself: see the log."]
           with io.open("_annot.txt", "w", encoding="utf-8") as fh:
               fh.write(u"::error title=%d failing test(s)::%s\n"
                        % (len(found), esc("\n".join(lines))))

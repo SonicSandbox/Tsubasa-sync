@@ -78,6 +78,7 @@ hook-dirs = "tsubasa.__pyinstaller:get_hook_dirs"
 
 [project.urls]
 Homepage = "https://github.com/SonicSandbox/Tsubasa-sync"
+Documentation = "https://github.com/SonicSandbox/Tsubasa-sync/blob/main/docs/USAGE.md"
 Source = "https://github.com/SonicSandbox/Tsubasa-sync"
 Issues = "https://github.com/SonicSandbox/Tsubasa-sync/issues"
 

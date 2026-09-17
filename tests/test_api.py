@@ -1425,3 +1425,113 @@ def test_sync_to_reference_ERRORS_on_the_obvious_mistakes(tmp_path):
         r = tsubasa.sync_to_reference(subtitle, against)
         assert r.outcome == V.ERROR, (label, r.outcome, r.reason)
         assert said in r.reason, (label, r.reason)
+
+
+# ---------------------------------------------------------------------------
+# 🚨 A PARTIAL REFERENCE — ruled 2026-09-16 on measurement
+# ---------------------------------------------------------------------------
+
+def _other_language(ref, seed=3):
+    u"""A realistic other-language subtitle of the same episode: timing
+    jittered, and about a fifth of each side's lines unique to it."""
+    rng = random.Random(seed)
+    return ([t + rng.uniform(-0.3, 0.3) for t in ref if rng.random() > 0.2]
+            + [t + rng.uniform(1.0, 3.0) for t in ref if rng.random() < 0.2])
+
+
+def test_a_PARTIAL_reference_is_REFUSED_where_a_cut_would_have_hidden(tmp_path):
+    u"""🚨 THE CASE THAT DECIDED IT. The reference covers the first four
+    minutes; the subtitle has a real cut at 15:00. Before the rule this came
+    back CONFIDENT, `locked`, runtime_check `held`, ONE segment — the cut
+    invisible and every field saying trust it."""
+    ref = _timeline()
+    partial = _sub(tmp_path / u"ref.en.srt", [t for t in ref if t < 240])
+    cut = _sub(tmp_path / u"cut.ja.srt",
+               [t + 2.5 if t < 900 else t + 12.5 for t in ref])
+
+    r = tsubasa.sync_to_reference(cut, partial)
+
+    assert r.outcome == V.REFUSED, (r.outcome, r.verdict_word, r.reason)
+    assert u"covers only part of this subtitle" in r.reason
+    assert u"force=True" in r.reason, u"the way out must be named"
+    with pytest.raises(ValueError):
+        tsubasa.render(r)
+    assert tsubasa.render(r, force=True).data, u"forced still renders"
+
+
+def test_every_SHAPE_of_partial_reference_is_refused(tmp_path):
+    ref = _timeline()
+    late = _sub(tmp_path / u"late.ja.srt", [t + 2.5 for t in ref])
+    shapes = [
+        (u"first dozen lines", ref[:12]),
+        (u"first four minutes", [t for t in ref if t < 240]),
+        (u"a missing middle", [t for t in ref if not 300 < t < 1080]),
+    ]
+    for label, starts in shapes:
+        reference = _sub(tmp_path / (u"ref-%d.en.srt" % len(starts)), starts)
+        r = tsubasa.sync_to_reference(late, reference)
+        assert r.outcome == V.REFUSED, (label, r.outcome, r.verdict_word)
+
+
+def test_ORDINARY_references_are_untouched_by_the_coverage_rule(tmp_path):
+    u"""⛔ THE CONTROL, and it outranks the rule. A coverage check that fired
+    on real other-language pairs would refuse the ordinary case to catch the
+    rare one."""
+    ref = _timeline()
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    ordinary = [
+        (u"shifted", [t + 2.5 for t in ref]),
+        (u"cut", [t + 2.5 if t < 700 else t + 12.5 for t in ref]),
+        (u"one trailing line the reference lacks",
+         [t + 2.5 for t in ref] + [ref[-1] + 40.0]),
+        (u"another language", [t + 2.5 for t in _other_language(ref)]),
+    ]
+    for label, starts in ordinary:
+        sub = _sub(tmp_path / (u"%s.ja.srt" % label.split()[0]), starts)
+        r = tsubasa.sync_to_reference(sub, reference)
+        assert (r.outcome, r.verdict_word) == (V.CONFIDENT, u"locked"), \
+            (label, r.outcome, r.verdict_word, r.reason)
+        assert not any(u"unchecked" in n for n in r.notes), (label, r.notes)
+
+
+def test_the_coverage_boundary_is_ONE_BUCKET_of_unchecked_lines(tmp_path):
+    u"""⭐ The rule's only number is the runtime walk's own: `BUCKET`, 120 s.
+    A run of unchecked lines spanning a bucket is refused; less than that —
+    or one stray line — keeps CONFIDENT and narrows the word to `fair`."""
+    ref = _timeline()
+    late = _sub(tmp_path / u"late.ja.srt", [t + 2.5 for t in ref])
+
+    wide = _sub(tmp_path / u"wide.en.srt", [t for t in ref if not 300 < t < 690])
+    r = tsubasa.sync_to_reference(late, wide)
+    assert r.outcome == V.REFUSED, (u"a ~150 s unchecked run", r.outcome)
+
+    narrow = _sub(tmp_path / u"narrow.en.srt",
+                  [t for t in ref if not 300 < t < 600])
+    r = tsubasa.sync_to_reference(late, narrow)
+    assert (r.outcome, r.verdict_word) == (V.CONFIDENT, u"fair"), \
+        (u"a ~60 s unchecked run", r.outcome, r.verdict_word, r.reason)
+    assert any(u"went unchecked" in n for n in r.notes), r.notes
+
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    stray = _sub(tmp_path / u"stray.ja.srt",
+                 [t + 2.5 for t in ref] + [ref[-1] + 150.0])
+    r = tsubasa.sync_to_reference(stray, reference)
+    assert (r.outcome, r.verdict_word) == (V.CONFIDENT, u"fair"), \
+        (u"one stray line", r.outcome, r.verdict_word)
+    assert any(u"1 line near" in n for n in r.notes), r.notes
+
+
+def test_separate_small_gaps_do_not_ADD_UP_to_a_refusal(tmp_path):
+    u"""⚠ A RUN IS CONTIGUOUS, and a mutation that merged runs SURVIVED the
+    first version of these checks — none had two separate patches. Two short
+    unchecked stretches ten minutes apart are two stretches under a bucket,
+    not one of eleven minutes."""
+    ref = _timeline()
+    late = _sub(tmp_path / u"late.ja.srt", [t + 2.5 for t in ref])
+    two_gaps = _sub(tmp_path / u"gaps.en.srt",
+                    [t for t in ref if not (300 < t < 600 or 900 < t < 1200)])
+
+    r = tsubasa.sync_to_reference(late, two_gaps)
+
+    assert (r.outcome, r.verdict_word) == (V.CONFIDENT, u"fair"), \
+        (r.outcome, r.verdict_word, r.reason)

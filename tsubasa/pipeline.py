@@ -51,6 +51,7 @@ On a `Scan`, forcing would mean *write the best of several REFUSED candidates*
 key to prevent. So `sync(scan_result, force=True)` **refuses loudly**. Silently
 ignoring it would leave the user believing they had overridden something.
 """
+import bisect
 import os
 
 from . import api as _api
@@ -65,7 +66,8 @@ from . import paths as _paths
 from . import results as _results
 from . import sidecar as _sidecar
 from . import verdict as _verdict
-from .align import MIN_ALIGNABLE_CUES, align, unique_starts
+from .align import (BUCKET, MIN_ALIGNABLE_CUES, align, mapper_for,
+                    removed_spans, unique_starts)
 from .apply import apply_plan
 from .naming import series as _series
 from .verdict import BITMAP_TRACK, CONFIDENT, ERROR, REFUSED, TEXT_TRACK
@@ -371,19 +373,47 @@ def sync_to_reference(subtitle, reference):
     picture* — a reference that is 2 s late produces a subtitle 2 s late with
     a perfect match rate.
 
-    🚨 AND A PARTIAL REFERENCE IS JUDGED ON THE PART IT COVERS. An embedded
-    track spans its whole video, so the verdict was fitted on references that
-    cover everything; a reference FILE need not. MEASURED 2026-09-16 against
-    a 266-cue subtitle shifted 2.5 s: a reference of its first 5 cues came
-    back `fair` with `runtime_check='absent'`, and one of its first **12**
-    cues — the opening minute of 23 — came back **`locked`** with
-    `runtime_check='weak'`. The offset was right because the shift was
-    constant; a cut after minute one would have been invisible to it.
-    ⭐ `Result.runtime_check` is the field that tells these apart: `held`
-    means the verdict walked the runtime and it held, `weak` and `absent`
-    mean it had little or nothing to walk. A caller aligning against
-    references it did not make should read it. ⚠ No threshold is imposed
-    here, because none has been measured — that is a ruling, not a default.
+    ===================================================================
+    🚨 A PARTIAL REFERENCE IS REFUSED — RULED 2026-09-16, ON MEASUREMENT
+    ===================================================================
+
+    An embedded track spans its whole video, so the verdict was fitted on
+    references that cover everything. A reference FILE need not, and the
+    whole-runtime walk cannot tell *a short episode* from *a long subtitle
+    whose reference stops early* — both simply give it few buckets. Measured
+    against a 266-cue subtitle:
+
+        reference = its first 4 minutes, subtitle CUT at 15:00
+            -> CONFIDENT, `locked`, runtime_check `held`, ONE segment
+
+    **The cut was invisible and every word said trust it.** `render()` would
+    have written the last eight minutes ten seconds wrong. ⛔ And the earlier
+    advice in this docstring — *read `runtime_check`* — was wrong too: it
+    said `held`, because `held` needs only two usable buckets.
+
+    ⭐ SO COVERAGE IS MEASURED DIRECTLY, WITH THE VERDICT'S OWN UNIT. Every
+    subtitle line is placed at its corrected time, and a line with no
+    reference line within one `BUCKET` (120 s — the runtime walk's resolution)
+    was never checked by anything. Then:
+
+    * **a run of unchecked lines spanning at least one bucket → REFUSED.** It
+      is a stretch the walk would have judged as a bucket had the reference
+      covered it, so the whole-runtime claim cannot be made — the same rule
+      `verdict()` applies when an answer does not hold throughout.
+      `render(result, force=True)` still writes it, with the offset measured
+      where the two overlap.
+    * **isolated lines, spanning less than a bucket → CONFIDENT, capped at
+      `fair`**, with a note naming them. A preview line the reference lacks is
+      not a stretch anything could have measured — the same narrowing
+      `verdict()` applies when its walk saw nothing.
+
+    ⭐ Checked against the cases that must NOT change, and none did: a full
+    reference, shifted or cut; a reference lacking one trailing line; a
+    realistic other-language pair with jittered timing and a fifth of each
+    side's lines unique to it. All `locked`, zero unchecked lines.
+
+    ⚠ `sync()` is unchanged. Its references are tracks that span their video,
+    and its verdict sits in bands measured on that population.
 
     ⚠ The runtime gate has nothing to compare against, because a subtitle
     file has no runtime of its own, so `duration_verdict` answers UNKNOWN and
@@ -426,11 +456,70 @@ def sync_to_reference(subtitle, reference):
                     None)
     m = measure(None, subtitle, ref)
     judge([m], clusters_for([m]))
-    return _result_for(
-        None, m, _outcome_of(m), _reason_of(m),
-        notes=[u"aligned against a subtitle file, not a video: this makes "
-               u"the subtitle agree with %s, and cannot tell whether that "
-               u"file agrees with the video" % os.path.basename(reference)])
+    outcome, reason = _outcome_of(m), _reason_of(m)
+    notes = [u"aligned against a subtitle file, not a video: this makes the "
+             u"subtitle agree with %s, and cannot tell whether that file "
+             u"agrees with the video" % os.path.basename(reference)]
+
+    if outcome == CONFIDENT:
+        runs = _unchecked_by_reference(subtitle, starts, m.verdict.segments)
+        if runs:
+            lines = sum(len(run) for run in runs)
+            longest = max(runs, key=lambda run: run[-1] - run[0])
+            first, last = (_verdict._clock(longest[0]),
+                           _verdict._clock(longest[-1]))
+            stretch = first if first == last else u"%s to %s" % (first, last)
+            if longest[-1] - longest[0] >= BUCKET:
+                outcome = REFUSED
+                reason = (
+                    u"the reference covers only part of this subtitle: %d of "
+                    u"its %d lines are more than %d s from any reference line "
+                    u"(the longest unchecked stretch runs %s), so their "
+                    u"timing was never checked and a cut or drift there "
+                    u"would not be seen. render(result, force=True) writes "
+                    u"it anyway, using the offset measured where the two "
+                    u"overlap" % (lines, m.cue_count, int(BUCKET), stretch))
+            else:
+                if m.verdict.word in (u"locked", u"strong"):
+                    m.verdict.word = u"fair"
+                notes.append(
+                    u"%d line%s near %s %s more than %d s from any reference "
+                    u"line and went unchecked, so the word is capped at fair"
+                    % (lines, u"" if lines == 1 else u"s", stretch,
+                       u"is" if lines == 1 else u"are", int(BUCKET)))
+
+    return _result_for(None, m, outcome, reason, notes=notes)
+
+
+def _unchecked_by_reference(subtitle, reference_starts, segments):
+    u"""Runs of subtitle lines no reference line comes near. -> [[seconds]]
+
+    ⭐ Each line is placed at its CORRECTED time — sorted afterwards, because
+    `mapper_for` is not monotonic across a negative jump — and lines inside a
+    removed stretch are skipped, exactly as `apply._render` skips them: they
+    are never written, so they are not unchecked output.
+    """
+    parsed = _formats.read_file(subtitle)
+    if not parsed.ok or not segments or not reference_starts:
+        return []
+    mapper = mapper_for(segments)
+    gone = removed_spans(segments)
+    placed = sorted(mapper(c.start) for c in parsed.cues
+                    if not any(lo <= c.start < hi for lo, hi in gone))
+    ref = sorted(reference_starts)
+
+    runs, current = [], []
+    for t in placed:
+        i = bisect.bisect_left(ref, t)
+        near = min(abs(t - ref[j]) for j in (i - 1, i) if 0 <= j < len(ref))
+        if near > BUCKET:
+            current.append(t)
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    return runs
 
 
 def _not_a_subtitle_file(label, path):

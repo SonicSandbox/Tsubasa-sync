@@ -209,10 +209,10 @@ if r.outcome == "CONFIDENT":
 Nothing is written for you. `render()` works on any result — a dry run of
 `sync()` too — so your app names and places files its own way.
 
-> ⚠ This makes the two subtitles **agree with each other**. It can't know
-> whether the reference matches the video, and a reference covering only part
-> of the episode is judged on that part. Check `r.runtime_check`: `held` means
-> the whole runtime was checked.
+> ⚠ This makes the two subtitles **agree with each other** — it can't know
+> whether the reference matches the video. A reference that covers only part
+> of the subtitle is **refused**, because a cut in the uncovered part would be
+> invisible; `render(r, force=True)` writes it anyway if you accept that.
 
 ### Reading names
 
