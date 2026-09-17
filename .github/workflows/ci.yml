@@ -26,7 +26,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.10", "3.12"]
+        # ⭐ OUR FLOOR PLUS EVERY PYTHON THE FIRST DOWNSTREAM CONSUMER RUNS.
+        # `requires-python = ">=3.10"` is a claim about 3.11 and 3.13 too, and
+        # until this line it was a claim nothing had tested. Anki Miner runs
+        # 3.11 / 3.12 / 3.13. ⛔ The first run of this matrix at two versions
+        # found three defects in configurations that had simply never run —
+        # an untested cell is not a passing one.
+        python: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -262,6 +268,20 @@ jobs:
               sys.exit("alias table in the wheel is %d bytes — truncated"
                        % info.file_size)
           print("alias table present: %d bytes" % info.file_size)
+
+          # ⛔ AND IT IS CALLED WHAT WE PUBLISH IT AS. `pyproject.toml` said
+          # `tsubasa` for the whole first day while the README and the release
+          # workflow said `tsubasa-sync`, and nothing compared them. `tsubasa`
+          # on PyPI is somebody else's project.
+          import email
+          meta = [n for n in names if n.endswith(".dist-info/METADATA")]
+          name = email.message_from_bytes(
+              zipfile.ZipFile(sys.argv[1]).read(meta[0]))["Name"]
+          if name != "tsubasa-sync":
+              sys.exit("the wheel is named %r, not 'tsubasa-sync' -- it would "
+                       "not install under the name the README gives, and "
+                       "PyPI would refuse the upload" % name)
+          print("distribution name: %s" % name)
           PY
 
       # ⛔ INSTALLED FROM THE WHEEL, IN A DIRECTORY THAT IS NOT THE SOURCE

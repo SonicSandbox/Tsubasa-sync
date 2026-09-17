@@ -3,7 +3,16 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tsubasa"
+# ⛔ THE DISTRIBUTION NAME IS `tsubasa-sync`; THE IMPORT NAME STAYS `tsubasa`.
+# `tsubasa` on PyPI belongs to an unrelated project (an AI-personas framework,
+# v0.2.2 when checked). The rename was ruled, and written into `release.yml`
+# and the README — and not into THIS line, the only one that decides it. It
+# sat here as `tsubasa` from the initial commit, which made the README's own
+# install command fail: *"inconsistent name: expected 'tsubasa-sync', but
+# metadata has 'tsubasa'"*. Measured, not inferred. And a tag would have built
+# `tsubasa-0.1.0` and had the upload refused by a trusted publisher configured
+# for a different project. ⭐ CI now asserts the built wheel's name.
+name = "tsubasa-sync"
 # ⭐ READ FROM `tsubasa/__init__.py`, never written twice. Two places holding
 # one version is one you can bump and leave stale, and `10-deployment.md`
 # rests a release proof on *the live artifact's version equals the local one*.
@@ -56,9 +65,9 @@ tsubasa = "tsubasa.cli:main"
 tsubasa-gui = "tsubasa.gui.app:main"
 
 [project.urls]
-Homepage = "https://github.com/OWNER/tsubasa"
-Source = "https://github.com/OWNER/tsubasa"
-Issues = "https://github.com/OWNER/tsubasa/issues"
+Homepage = "https://github.com/SonicSandbox/Tsubasa-sync"
+Source = "https://github.com/SonicSandbox/Tsubasa-sync"
+Issues = "https://github.com/SonicSandbox/Tsubasa-sync/issues"
 
 [tool.setuptools.dynamic]
 version = { attr = "tsubasa.__version__" }

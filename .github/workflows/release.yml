@@ -70,6 +70,17 @@ jobs:
           if not hit:
               sys.exit("SDIST IS MISSING %s — GPL requires usable source" % need)
           print("sdist  : %s carries the table, %d bytes" % (sdist, hit[0].size))
+
+          # ⛔ THE NAME, CHECKED AT THE LAST CHEAP MOMENT. `pyproject.toml`
+          # carried `tsubasa` -- somebody else's project on PyPI -- while this
+          # file's own header said `tsubasa-sync`. A refused upload is
+          # recoverable; it is also a tag pointing at nothing.
+          import email
+          meta = [n for n in z.namelist() if n.endswith(".dist-info/METADATA")]
+          name = email.message_from_bytes(z.read(meta[0]))["Name"]
+          if name != "tsubasa-sync":
+              sys.exit("DISTRIBUTION IS NAMED %r, NOT 'tsubasa-sync'" % name)
+          print("name   : %s" % name)
           PY
 
       - name: Install the wheel and prove the table LOADS
