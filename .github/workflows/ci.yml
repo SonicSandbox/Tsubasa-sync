@@ -49,38 +49,100 @@ jobs:
         run: python run_tests.py
 
       # =====================================================================
-      # 🚨 PRINT THE FAILING SUITE'S OUTPUT INLINE, NOT ONLY AS AN ARTEFACT
+      # 🚨 PUT THE FAILURE WHERE IT CAN BE READ WITHOUT CREDENTIALS
       # =====================================================================
       # `run_tests.py` writes every failing suite's FULL output to disk and
       # the step summary shows only `exit code 1`. Uploading that as an
       # artefact was not enough: reading it needs an authenticated download,
       # so the one person who could see the failure was the one person the
       # workflow exists to save the trouble.
+      #
+      # ⛔ AND THE FIRST FIX WAS THE SAME MISTAKE ONE LEVEL UP. Printing to
+      # the job log is no better: `GET .../jobs/{id}/logs` answers
+      # *"Must have admin rights to Repository"*, so a collaborator, a fork,
+      # or an agent holding no token still cannot read why the build is red.
+      # `$GITHUB_STEP_SUMMARY` is served in the check run's public `output`,
+      # so it is legible to anyone who can see that the run failed at all.
+      #
       # ⭐ `doctrine/evidence`: the instrument has to hand back the finding,
       # not store it somewhere the finding cannot be reached from.
       - name: Say what actually failed
         if: failure()
         shell: bash
         run: |
+          # ⚠ Collected to a file first, then emitted twice. Teeing straight
+          # into the summary through process substitution can lose the tail:
+          # the step exits, and the `tee` on the other end has not flushed.
+          {
           echo "=============================================="
           echo " the runner's own record of the failing suites"
           echo "=============================================="
+
+          # ⭐ NAME THE TESTS FIRST. `tail -n 60` of a suite's console output
+          # can scroll the one line that matters off the top -- it has, and it
+          # cost a second eight-minute run. The JUnit XML carries every
+          # failure's name and message regardless of how much noise preceded
+          # it, so that is what gets read.
+          python - <<'PY'
+          import glob, os, xml.etree.ElementTree as ET
+          rows = 0
+          for x in sorted(glob.glob("_runs/*/*.xml")):
+              root = ET.parse(x).getroot()
+              suite = root if root.tag == "testsuite" else root.find("testsuite")
+              if suite is None:
+                  continue
+              for case in suite.iter("testcase"):
+                  for kind in ("failure", "error"):
+                      node = case.find(kind)
+                      if node is None:
+                          continue
+                      rows += 1
+                      print("")
+                      print("%s  %s::%s" % (kind.upper(), os.path.basename(x),
+                                            case.get("name")))
+                      msg = (node.get("message") or "").strip()
+                      body = (node.text or "").strip()
+                      for line in (msg.splitlines() + body.splitlines())[-25:]:
+                          print("    " + line)
+          print("")
+          print("%d failing test(s) named above" % rows)
+          if not rows:
+              print("NO test failed -- the suite runner exited non-zero for "
+                    "another reason (a collection error, or the runner "
+                    "itself). The tails below are the whole story.")
+          PY
+
           for f in _runs/*/*.txt; do
             [ -f "$f" ] || continue
             echo ""
             echo "----- $f -----"
-            tail -n 60 "$f"
+            tail -n 40 "$f"
           done
+
           echo ""
           echo "===== environment, for the differences that matter ====="
           python -c "import sys,platform;print('python',sys.version.split()[0],platform.platform())"
           python -c "
+          import sys, os, tempfile
+          print('  cwd            ', os.getcwd())
+          print('  fsencoding     ', sys.getfilesystemencoding())
+          print('  tempdir        ', tempfile.gettempdir())
+          print('  case-insensitive', os.path.exists(sys.executable.upper()))
           for m in ('numpy','anitopy','guessit','send2trash','tkinter'):
               try:
                   __import__(m); print('  present', m)
               except Exception as e:
                   print('  ABSENT ', m, '->', type(e).__name__)
           "
+          } > _diag.txt 2>&1 || true
+
+          cat _diag.txt
+          {
+            echo "## ${{ matrix.os }} · py${{ matrix.python }} — what failed"
+            echo '```'
+            cat _diag.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ⭐ AND STILL KEEP IT AS AN ARTEFACT. A full run once reported one
       # failure with its name scrolled off, costing a second eight-minute run
