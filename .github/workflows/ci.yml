@@ -57,12 +57,20 @@ jobs:
       # so the one person who could see the failure was the one person the
       # workflow exists to save the trouble.
       #
-      # ⛔ AND THE FIRST FIX WAS THE SAME MISTAKE ONE LEVEL UP. Printing to
-      # the job log is no better: `GET .../jobs/{id}/logs` answers
-      # *"Must have admin rights to Repository"*, so a collaborator, a fork,
-      # or an agent holding no token still cannot read why the build is red.
-      # `$GITHUB_STEP_SUMMARY` is served in the check run's public `output`,
-      # so it is legible to anyone who can see that the run failed at all.
+      # ⛔ AND THE FIRST TWO FIXES WERE THE SAME MISTAKE ONE LEVEL UP, TWICE.
+      #   1. The job log: `GET .../jobs/{id}/logs` answers *"Must have admin
+      #      rights to Repository"*. A collaborator, a fork, or anyone holding
+      #      no token still cannot read why the build is red.
+      #   2. `$GITHUB_STEP_SUMMARY`: rendered on the run's web page, but the
+      #      check-run API returns `"summary": null` and the page fetches it
+      #      client-side. MEASURED, not assumed — a run was pushed, and the
+      #      summary came back empty from the API that was supposed to serve
+      #      it.
+      #
+      # ⭐ AN ANNOTATION IS THE ONE CHANNEL THAT SURVIVES. `::error::` lands in
+      # `GET /check-runs/{id}/annotations`, which is public for a public repo.
+      # So the failing test NAMES go there; the summary and the log keep the
+      # long form for whoever does have rights.
       #
       # ⭐ `doctrine/evidence`: the instrument has to hand back the finding,
       # not store it somewhere the finding cannot be reached from.
@@ -84,8 +92,9 @@ jobs:
           # failure's name and message regardless of how much noise preceded
           # it, so that is what gets read.
           python - <<'PY'
-          import glob, os, xml.etree.ElementTree as ET
-          rows = 0
+          import glob, io, os, xml.etree.ElementTree as ET
+
+          found = []
           for x in sorted(glob.glob("_runs/*/*.xml")):
               root = ET.parse(x).getroot()
               suite = root if root.tag == "testsuite" else root.find("testsuite")
@@ -96,20 +105,41 @@ jobs:
                       node = case.find(kind)
                       if node is None:
                           continue
-                      rows += 1
-                      print("")
-                      print("%s  %s::%s" % (kind.upper(), os.path.basename(x),
-                                            case.get("name")))
-                      msg = (node.get("message") or "").strip()
-                      body = (node.text or "").strip()
-                      for line in (msg.splitlines() + body.splitlines())[-25:]:
-                          print("    " + line)
+                      found.append((kind.upper(), os.path.basename(x),
+                                    case.get("name"),
+                                    (node.get("message") or "").strip(),
+                                    (node.text or "").strip()))
+
+          for kind, xml, name, msg, body in found:
+              print("")
+              print("%s  %s::%s" % (kind, xml, name))
+              for line in (msg.splitlines() + body.splitlines())[-25:]:
+                  print("    " + line)
           print("")
-          print("%d failing test(s) named above" % rows)
-          if not rows:
+          print("%d failing test(s) named above" % len(found))
+          if not found:
               print("NO test failed -- the suite runner exited non-zero for "
                     "another reason (a collection error, or the runner "
                     "itself). The tails below are the whole story.")
+
+          # ⛔ THE ANNOTATION. Newlines must be percent-encoded or GitHub keeps
+          # only the first line, and `%` must go first or it eats the escapes
+          # it is about to write. Capped: the API truncates a long annotation,
+          # and a truncated one that lost the test NAMES is worth nothing.
+          def esc(s):
+              return (s.replace("%", "%25").replace("\r", "%0D")
+                       .replace("\n", "%0A"))
+
+          lines = ["%s %s::%s -- %s" % (k, x, n, (m.splitlines() or [""])[0][:200])
+                   for k, x, n, m, _ in found[:25]]
+          if len(found) > 25:
+              lines.append("...and %d more" % (len(found) - 25))
+          if not lines:
+              lines = ["the suite exited non-zero with no failing testcase in "
+                       "any JUnit XML -- look at the step summary"]
+          with io.open("_annot.txt", "w", encoding="utf-8") as fh:
+              fh.write(u"::error title=%d failing test(s)::%s\n"
+                       % (len(found), esc("\n".join(lines))))
           PY
 
           for f in _runs/*/*.txt; do
@@ -143,6 +173,11 @@ jobs:
             cat _diag.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # ⭐ LAST, AND ON REAL STDOUT. Everything above went into the file;
+          # a workflow command swallowed by a redirect is not a command.
+          [ -s _annot.txt ] && cat _annot.txt
+          exit 0
 
       # ⭐ AND STILL KEEP IT AS AN ARTEFACT. A full run once reported one
       # failure with its name scrolled off, costing a second eight-minute run
