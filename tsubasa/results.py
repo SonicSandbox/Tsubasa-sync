@@ -52,7 +52,7 @@ import time
 import hashlib
 
 from .cache import SAMPLE, ContentKey, content_key
-from .paths import atomic_write_bytes, cache_root, load_config
+from .paths import atomic_write_bytes, cache_root
 
 
 def subtitle_key(path):
@@ -472,8 +472,9 @@ class Results(object):
 
     def __init__(self, root=None, version=RESULTS_VERSION, cfg=None):
         if root is None:
-            root = os.path.join(str(cache_root(cfg or load_config())),
-                                RESULTS_DIR)
+            # ⛔ No `load_config()` here: an installed copy has no project
+            # config, and `cache_root` needs none. See its docstring.
+            root = os.path.join(str(cache_root(cfg)), RESULTS_DIR)
         self.root = str(root)
         self.version = version
         self.hits = 0

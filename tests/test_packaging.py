@@ -506,6 +506,42 @@ def test_every_sentence_self_check_can_say_is_printable_on_a_LEGACY_console(
     assert said >= 10, u"too few sentences were produced to prove anything"
 
 
+def test_an_INSTALLED_library_needs_no_project_config(tmp_path, monkeypatch):
+    u"""🚨 0.1.0 SHIPPED BROKEN HERE, AND IT WAS PUBLIC BEFORE ANYONE SAW.
+
+    `tsubasa.config.json` is the DEVELOPMENT config at the repository root. No
+    installed copy has it — and the per-user cache location read it, so
+    `sync(scan(folder))`, the results store and the cache all raised
+    `ConfigError` for everyone who ran `pip install tsubasa-sync`.
+
+    ⛔ Every check was green because every check ran inside a checkout, where
+    walking up always finds the file. The wheel and frozen jobs ran outside
+    one and never called `sync()`. Found by running the usage guide's examples
+    against the package installed from PyPI.
+
+    ⭐ So the config is made UNFINDABLE here, and the whole ordinary path —
+    scan, a sync with the real default results store and trash root — must
+    still run. `TSUBASA_CACHE` keeps it out of the developer's own profile.
+    """
+    from tsubasa import paths as PATHS
+
+    def nowhere(start=None):
+        raise PATHS.ConfigError(u"tsubasa.config.json not found (simulated: "
+                                u"an installed copy has none)")
+
+    monkeypatch.setattr(PATHS, "find_config", nowhere)
+    monkeypatch.setenv(u"TSUBASA_CACHE", str(tmp_path / u"cache"))
+    library = tmp_path / u"library"
+    library.mkdir()
+    for name in (u"Show - 01.mkv", u"Show - 01.ja.srt"):
+        (library / name).write_bytes(b"")
+
+    assert PATHS.cache_root() == tmp_path / u"cache"
+    report = tsubasa.sync(tsubasa.scan(str(library)))        # defaults, all of them
+    assert len(report) == 1, report.results
+    assert report.results[0].outcome == u"ERROR"             # an empty file, said so
+
+
 def test_self_check_RUNS_nothing(monkeypatch):
     u"""⛔ The module promises a lookup, never an execution. Checked."""
     import subprocess

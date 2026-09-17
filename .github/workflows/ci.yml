@@ -327,6 +327,36 @@ jobs:
           assert callable(tsubasa.scan) and callable(tsubasa.sync)
           PY
 
+      # =====================================================================
+      # 🚨 THE INSTALLED PACKAGE, USED THE WAY A USER USES IT — OUTSIDE A CHECKOUT
+      # =====================================================================
+      # 0.1.0 WAS PUBLISHED BROKEN: `sync(scan(folder))` raised ConfigError for
+      # every `pip install`, because the per-user cache location read the
+      # DEVELOPMENT config at the repository root. Every job above ran inside
+      # a checkout, where walking up always finds that file; this job ran
+      # outside one and never called `sync()`. Found by running the examples
+      # against the package from PyPI, after publication.
+      # ⭐ So the examples run HERE too — against the installed wheel, from a
+      # directory with no checkout above it — which drives scan, sync with its
+      # real defaults, the reference sync, render, the CLI and self_check.
+      - name: Run every example against the installed wheel, outside the source tree
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/outside && mkdir -p /tmp/outside
+          cp examples/*.py /tmp/outside/
+          cd /tmp/outside
+          test ! -e tsubasa.config.json
+          for example in *.py; do
+            echo "::group::$example"
+            python "$example" || {
+              echo "::error title=example failed outside a checkout::$example"
+              exit 1
+            }
+            echo "::endgroup::"
+          done
+
   # =========================================================================
   # 🚨 DOES A FROZEN APPLICATION GET THE DATA?
   # =========================================================================

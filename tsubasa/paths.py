@@ -212,20 +212,46 @@ def media_root(cfg=None, start=None):
 # cache
 # --------------------------------------------------------------------------
 
+#: The cache override, when no project config names one.
+CACHE_ENV_VAR = "TSUBASA_CACHE"
+
+
 def cache_root(cfg=None, start=None):
     """Per-user app data.  NEVER beside the media.
 
     subsync wrote _ref_2.ass and a 500 KB .npy next to the subtitles it was
     aligning, inside a corpus its own README marks do-not-modify.
     spec/02-data-model.md pins the locations below.
-    """
-    cfg = cfg or load_config(start)
-    section = cfg["cache"]
 
-    env_val = os.environ.get(section["envVar"])
+    ===================================================================
+    🚨 NO CONFIG REQUIRED — AND 0.1.0 SHIPPED REQUIRING ONE
+    ===================================================================
+
+    This read `cfg or load_config(start)`, and `load_config` walks up from
+    the working directory and from this package looking for
+    `tsubasa.config.json` — the DEVELOPMENT config at the repository root,
+    which no installed copy has. So `pip install tsubasa-sync` followed by
+    `sync(scan(folder))` raised `ConfigError` for every user, and so did the
+    results store and the cache, all of which come through here.
+
+    ⛔ Nothing caught it before publication, because nothing ran outside a
+    checkout: every suite, every CI job and every example found the config by
+    walking up from the source tree. The frozen-app and wheel jobs DID run
+    outside it — and called only `scan()` and `self_check()`, neither of
+    which reaches here. Found by running the usage guide's examples against
+    the package installed from PyPI, after 0.1.0 was already public.
+
+    ⭐ The config's cache section only ever named the override variable; the
+    locations below were always built in. A caller holding a config still has
+    its `envVar` honoured, so the development tools are unchanged.
+    """
+    section = (cfg or {}).get("cache") or {}
+    env_name = section.get("envVar") or CACHE_ENV_VAR
+
+    env_val = os.environ.get(env_name)
     if env_val:
         _resolution["cache"] = env_val
-        _resolution["cacheHow"] = "%s environment variable" % section["envVar"]
+        _resolution["cacheHow"] = "%s environment variable" % env_name
         return Path(env_val).expanduser()
 
     if sys.platform == "win32":
