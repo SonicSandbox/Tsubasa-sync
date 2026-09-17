@@ -138,31 +138,69 @@ def test_the_library_imports_with_numpy_ALONE():
     imports live inside functions, so an accidental top-level `import guessit`
     somewhere would only show up when that module is first touched. This
     blocks them at the meta path and re-imports the package from scratch.
+
+    🚨 AND THE BLOCKER WAS INERT ON HALF THE MATRIX, WHICH NOTHING NOTICED.
+    It implemented `find_module`, the pre-3.4 finder protocol. Python 3.10 and
+    3.11 still reach that through a deprecated fallback — measured here, it
+    announces itself: *"find_spec() not found; falling back to find_module()"*
+    — and **3.12 removed the fallback**. On 3.12 and 3.13 the blocker blocked
+    nothing and this check passed whatever the library imported, on both CI
+    legs, for as long as those legs had existed.
+    ⭐ So it implements `find_spec`, and it PROVES IT IS LIVE before it is
+    believed: `tabnanny` is blocked too, the package never imports it, and if
+    importing it does not raise then the instrument is broken on this
+    interpreter and the check fails saying so. A blocker that can go quiet
+    needs a positive control, not a comment.
+
+    ⭐ PyInstaller is on the list because `tsubasa/__pyinstaller/` now ships in
+    the package: its `hook-tsubasa.py` imports PyInstaller, and nothing a
+    library user imports may ever reach it.
     """
     blocked = {u"anitopy", u"guessit", u"send2trash", u"onnxruntime",
-               u"tkinterdnd2", u"PIL", u"scipy", u"pandas"}
+               u"tkinterdnd2", u"PIL", u"scipy", u"pandas", u"PyInstaller",
+               u"tabnanny"}
 
     class Block(object):
-        def find_module(self, name, path=None):
-            return self if name.split(u".")[0] in blocked else None
-
-        def load_module(self, name):
-            raise ImportError(u"%s is blocked: it may not be a hard "
-                              u"dependency of the library" % name)
+        def find_spec(self, name, path=None, target=None):
+            if name.split(u".")[0] in blocked:
+                raise ImportError(u"%s is blocked: it may not be a hard "
+                                  u"dependency of the library" % name)
+            return None
 
     saved = {k: v for k, v in sys.modules.items()
-             if k == u"tsubasa" or k.startswith(u"tsubasa.")}
+             if k == u"tsubasa" or k.startswith(u"tsubasa.")
+             or k.split(u".")[0] in blocked}
     for key in list(saved):
         del sys.modules[key]
     sys.meta_path.insert(0, Block())
     try:
+        try:
+            import tabnanny                                   # noqa: F401
+        except ImportError:
+            pass
+        else:
+            pytest.fail(u"the meta-path blocker is INERT on Python %s: a "
+                        u"blocked module imported cleanly, so every other "
+                        u"assertion below would pass whatever the library "
+                        u"imports" % sys.version.split()[0])
         import tsubasa as fresh
         import tsubasa.pipeline                               # noqa: F401
         import tsubasa.api                                    # noqa: F401
         import tsubasa.cli                                    # noqa: F401
+        import tsubasa.selfcheck                              # noqa: F401
+        import tsubasa.__pyinstaller                          # noqa: F401
         assert callable(fresh.scan) and callable(fresh.sync)
+        assert fresh.self_check().alias_entries > 0
     finally:
         sys.meta_path.pop(0)
+        # ⚠ A module first imported INSIDE the block is bound to the fresh
+        # siblings, not the restored ones, and would outlive the test that
+        # way. Dropped, so the next import re-resolves against the restored
+        # package.
+        for key in [k for k in sys.modules
+                    if (k == u"tsubasa" or k.startswith(u"tsubasa."))
+                    and k not in saved]:
+            del sys.modules[key]
         sys.modules.update(saved)
 
 
@@ -274,3 +312,213 @@ def test_set_ffmpeg_is_reachable_from_the_PACKAGE(tmp_path):
     from tsubasa.container import ffmpeg as FF
     assert tsubasa.set_ffmpeg is FF.set_location
     assert u"set_ffmpeg" in tsubasa.__all__
+
+
+# ===========================================================================
+# ⭐ FROZEN APPLICATIONS — the PyInstaller hook that ships inside the package
+# ===========================================================================
+#
+# ⛔ MEASURED 2026-09-16 before any of this existed: a PyInstaller build of a
+# plain `import tsubasa`, from the real wheel, loaded 0 alias entries and 0
+# vocabulary tokens and settled a cross-script pair `unsure` — exit 0, no
+# error. With the hook shipped, the SAME build command carried all 221,258.
+# ⚠ These checks run everywhere and never import PyInstaller; the CI `frozen`
+# job builds a real frozen app and asserts `self_check().ok` inside it.
+
+def _hook_file():
+    return os.path.join(os.path.dirname(os.path.abspath(tsubasa.__file__)),
+                        u"__pyinstaller", u"hook-tsubasa.py")
+
+
+def test_pyinstaller_can_FIND_the_hook_through_the_package():
+    u"""`pyproject.toml`'s `pyinstaller40` entry point names
+    `get_hook_dirs`; this is the other half of that contract."""
+    from tsubasa import __pyinstaller as HOOKS
+    dirs = HOOKS.get_hook_dirs()
+    assert len(dirs) == 1 and os.path.isabs(dirs[0]), dirs
+    assert os.path.isfile(os.path.join(dirs[0], u"hook-tsubasa.py")), dirs
+
+
+def test_the_hook_collects_EVERY_data_file_the_package_carries():
+    u"""🚨 A NEW DATA FILE THE HOOK MISSES IS THE ORIGINAL DEFECT AGAIN.
+
+    Frozen, it would be absent, and both loaders fail open — so nothing would
+    say so. ⭐ The patterns are read from the hook's SYNTAX TREE, because
+    executing it imports PyInstaller, which is a dependency of nothing here.
+    """
+    import ast
+    import fnmatch
+    tree = ast.parse(io.open(_hook_file(), encoding="utf-8").read())
+    patterns = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                getattr(t, "id", None) == "DATA_PATTERNS" for t in node.targets):
+            patterns = ast.literal_eval(node.value)
+    assert patterns, u"hook-tsubasa.py no longer defines DATA_PATTERNS"
+
+    data = _data_dir()
+    carried = sorted(n for n in os.listdir(data)
+                     if os.path.isfile(os.path.join(data, n)))
+    assert carried, u"tsubasa/data/ is empty, so this check would prove nothing"
+    missed = [n for n in carried
+              if not any(fnmatch.fnmatch(u"data/" + n, p) for p in patterns)]
+    assert not missed, (
+        u"a frozen application would ship without %s: add its pattern to "
+        u"DATA_PATTERNS in hook-tsubasa.py AND to package-data in "
+        u"pyproject.toml" % missed)
+
+
+# ===========================================================================
+# ⭐ self_check() — the instrument that makes the fail-open visible
+# ===========================================================================
+
+def test_self_check_is_OK_on_a_whole_install():
+    check = tsubasa.self_check()
+    assert check.ok, check.problems
+    assert check.problems == []
+    assert check.alias_entries == check.alias_declared >= MIN_ALIAS_ROWS
+    assert (check.vocabulary_tokens == check.vocabulary_declared
+            >= MIN_DECORATION_TOKENS)
+    assert check.version == tsubasa.__version__
+
+
+def test_self_check_says_so_when_the_alias_table_is_ABSENT(monkeypatch):
+    u"""⭐ The exact state a frozen build produced — and the sentence names the
+    measured cost and the fix, not just the symptom."""
+    monkeypatch.setattr(ALIAS, "_CACHED", ALIAS.Table())
+    check = tsubasa.self_check()
+    assert not check.ok
+    assert len(check.problems) == 1, check.problems
+    sentence = check.problems[0]
+    assert u"alias table did not load" in sentence
+    assert u"51.4%" in sentence, u"the cost must be the measured one"
+    assert u"PyInstaller" in sentence, u"the fix for the case that happened"
+
+
+def test_a_TRUNCATED_table_fails_the_check_that_a_floor_would_pass(monkeypatch):
+    u"""🚨 WHY THE COMPARISON IS WITH THE TABLE'S OWN HEADER.
+
+    150,000 entries clears this suite's own `MIN_ALIAS_ROWS`, so a threshold
+    would have called a table missing a third of itself healthy. The header
+    says how many it should hold, and that is the number that is checked.
+    """
+    real = ALIAS.load()
+    keys = dict(list(real._keys.items())[:150000])
+    assert len(keys) >= MIN_ALIAS_ROWS, u"the premise: a floor would pass it"
+    monkeypatch.setattr(ALIAS, "_CACHED",
+                        ALIAS.Table(keys, real._names, dict(real.meta)))
+    check = tsubasa.self_check()
+    assert not check.ok
+    assert u"150000 of the %d" % real.meta[u"keys"] in check.problems[0]
+
+
+def test_a_table_that_does_not_declare_its_size_is_not_trusted(monkeypatch):
+    real = ALIAS.load()
+    meta = dict(real.meta)
+    meta.pop(u"keys")
+    monkeypatch.setattr(ALIAS, "_CACHED",
+                        ALIAS.Table(real._keys, real._names, meta))
+    check = tsubasa.self_check()
+    assert not check.ok
+    assert u"does not say how many" in check.problems[0]
+
+
+def test_self_check_says_so_when_the_vocabulary_is_ABSENT(monkeypatch):
+    monkeypatch.setattr(DECO, "_CACHED", DECO.Vocabulary())
+    check = tsubasa.self_check()
+    assert not check.ok
+    assert u"decoration vocabulary did not load" in check.problems[0]
+
+
+def test_missing_ffmpeg_is_REPORTED_and_never_fails_the_check(monkeypatch):
+    u"""⚠ `ok` is about what goes wrong SILENTLY. A missing ffmpeg refuses
+    every container that needs it with a sentence naming the fix."""
+    from tsubasa.container import ffmpeg as FF
+    monkeypatch.setattr(FF, "find", lambda tool="ffprobe", cache_dir=None: None)
+    check = tsubasa.self_check()
+    assert check.ok, check.problems
+    assert check.ffmpeg is None and check.ffprobe is None
+    assert any(u"ffprobe was not found" in n for n in check.notes), check.notes
+
+
+def test_self_check_survives_an_import_system_that_RAISES(monkeypatch):
+    u"""🚨 FOUND BY THIS SUITE ON ITS FIRST RUN. `importlib.util.find_spec`
+    consults every finder on the meta path, and one that raises instead of
+    declining crashed `self_check()` — inside a frozen app or a sandbox, the
+    environments it exists for. It must answer, and say what happened."""
+    import importlib.util
+    from tsubasa import selfcheck as SC
+
+    def hostile(name, package=None):
+        raise ImportError(u"%s is blocked by a finder" % name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", hostile)
+    check = tsubasa.self_check()
+    assert check.ok, check.problems
+    assert check.optional == dict((name, False) for name, _ in SC.OPTIONAL)
+    assert any(u"raised ImportError" in n for n in check.notes), check.notes
+
+
+def test_every_sentence_self_check_can_say_is_printable_on_a_LEGACY_console(
+        monkeypatch):
+    u"""🚨 MEASURED IN A REAL FROZEN APP, NOT REASONED.
+
+    Built without the hook, the app's `print(sentence)` died with
+    `UnicodeEncodeError: 'charmap'` — the sentence carried Japanese and an em
+    dash, a frozen Windows app's stdout is cp1252, and the PyInstaller
+    bootloader ignores `PYTHONIOENCODING`. So the instrument crashed its host
+    in precisely the state it exists to report. Every failure mode is driven
+    here at once.
+
+    ⚠ ASCII, NOT cp1252 — AND THE FIRST VERSION OF THIS CHECK SAID cp1252. A
+    mutant putting an em dash back SURVIVED it, because cp1252 has one. That
+    app's stdout was cp1252 only because it was a PIPE; a real console window
+    uses the OEM code page, cp437, which does not. ⭐ The check now asserts
+    what the module claims, and the survivor is what showed they differed.
+    """
+    import importlib.util
+    from tsubasa.container import ffmpeg as FF
+
+    real = ALIAS.load()
+    meta = dict(real.meta)
+    meta.pop(u"keys")
+
+    def hostile(name, package=None):
+        raise ImportError(u"blocked")
+
+    states = [
+        (ALIAS.Table(), DECO.Vocabulary()),                          # absent
+        (ALIAS.Table(dict(list(real._keys.items())[:10]), real._names,
+                     dict(real.meta)), DECO.load()),                 # truncated
+        (ALIAS.Table(real._keys, real._names, meta), DECO.load()),   # no header
+    ]
+    monkeypatch.setattr(FF, "find", lambda tool="ffprobe", cache_dir=None: None)
+    monkeypatch.setattr(importlib.util, "find_spec", hostile)
+    said = 0
+    for table, vocab in states:
+        monkeypatch.setattr(ALIAS, "_CACHED", table)
+        monkeypatch.setattr(DECO, "_CACHED", vocab)
+        check = tsubasa.self_check()
+        for sentence in check.problems + check.notes:
+            sentence.encode("ascii")         # raises on anything it cannot hold
+            said += 1
+        repr(check).encode("ascii")
+    assert said >= 10, u"too few sentences were produced to prove anything"
+
+
+def test_self_check_RUNS_nothing(monkeypatch):
+    u"""⛔ The module promises a lookup, never an execution. Checked."""
+    import subprocess
+
+    def refuse(*args, **kwargs):
+        raise AssertionError(u"self_check started a process: %r" % (args[:1],))
+
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    monkeypatch.setattr(subprocess, "run", refuse)
+    tsubasa.self_check()
+
+
+def test_the_check_is_plain_data_for_a_diagnostics_bundle():
+    check = tsubasa.self_check()
+    json.dumps(check.as_dict())
+    assert set(check.as_dict()) == set(tsubasa.SelfCheck.__slots__)

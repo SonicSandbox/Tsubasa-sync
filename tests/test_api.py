@@ -29,6 +29,7 @@ from the wrong layer.
 """
 import io
 import os
+import random
 import sys
 
 import pytest
@@ -1218,3 +1219,209 @@ def test_an_agreeing_library_derives_NO_offset(tmp_path):
         offered = scan.for_video(video)
         assert [c.subtitle.key[1] for c in offered] == [video.key[1]]
         assert offered[0].speculative is False
+
+
+# ===========================================================================
+# ⭐ FOR CODE BUILT ON TSUBASA — added 2026-09-16, and never renamed
+# ===========================================================================
+#
+# hato and Anki Miner were both found reaching into internals for answers the
+# library already had: `parsed` for the episode, `sidecar` for the language,
+# `align` + `unique_starts` + `Fit.mapper()` for a subtitle-to-subtitle sync.
+# These are those answers under names that can be promised.
+
+def _touch(folder, *names):
+    for name in names:
+        (folder / name).write_bytes(b"")
+
+
+def _timeline(seed=7, end=1400.0):
+    u"""Irregular cue starts, like speech. ⚠ Evenly spaced starts would
+    align at every multiple of the spacing, which proves nothing."""
+    rng, out, t = random.Random(seed), [], 5.0
+    while t < end:
+        out.append(round(t, 3))
+        t += rng.uniform(1.8, 9.0)
+    return out
+
+
+def _sub(path, starts, text=u"line %d", encoding="utf-8"):
+    body = u"".join(u"%d\n%s --> %s\n%s\n\n"
+                    % (i + 1, _stamp(t), _stamp(t + 1.2), text % (i + 1))
+                    for i, t in enumerate(starts))
+    with io.open(str(path), "wb") as fh:
+        fh.write(body.encode(encoding))
+    return str(path)
+
+
+def _starts_of(data, encoding="utf-8"):
+    import re
+    stamps = re.findall(r"(\d\d):(\d\d):(\d\d),(\d\d\d) -->",
+                        data.decode(encoding))
+    return [int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+            for h, m, s, ms in stamps]
+
+
+def test_a_video_says_its_season_and_episode_without_reaching_into_parsed(
+        tmp_path):
+    _touch(tmp_path, u"Show S02E07.mkv", u"Show - 13.5.mkv", u"Show OVA.mkv")
+    by = dict((v.name, v) for v in tsubasa.scan(str(tmp_path)).videos)
+
+    v = by[u"Show S02E07.mkv"]
+    assert (v.title, v.season, v.episode, v.episode_candidates) == \
+        (u"Show", 2, 7, (7,))
+    # ⛔ hato's `06-edge-cases.md`: a half episode matches literally, unrounded
+    half = by[u"Show - 13.5.mkv"]
+    assert half.episode == 13.5 and not isinstance(half.episode, int)
+    nothing = by[u"Show OVA.mkv"]
+    assert nothing.episode is None and nothing.episode_candidates == ()
+    assert all(item.lang is None and item.lang_tag is None
+               for item in by.values()), u"a video has no language of its own"
+
+
+def test_a_subtitle_says_its_language_RESOLVED_and_AS_WRITTEN(tmp_path):
+    expected = {
+        u"Show - 01.jpn.srt": (u"ja", u"jpn"),
+        u"Show - 01.ja-JP.srt": (u"ja", u"ja-jp"),
+        u"Show - 01.en.ass": (u"en", u"en"),
+        u"Show - 01.srt": (u"und", u""),
+        u"ヘルモード.S02E22.WEBRip.ABEMA.ja[cc].srt": (u"ja", u"ja[cc]"),
+    }
+    _touch(tmp_path, u"Show - 01.mkv", *expected)
+    got = dict((s.name, (s.lang, s.lang_tag))
+               for s in tsubasa.scan(str(tmp_path)).subtitles)
+    assert got == expected
+
+
+def test_unpaired_by_LANGUAGE_finds_the_video_that_only_has_English(tmp_path):
+    u"""🚨 THE GAP hato WOULD HAVE SHIPPED WITH. Language-blind, a video with
+    only an English subtitle reads as covered, and a Japanese fetcher never
+    fetches for it."""
+    _touch(tmp_path, u"Show - 01.mkv", u"Show - 01.en.srt",
+           u"Show - 02.mkv", u"Show - 02.jpn.srt",
+           u"Show - 03.mkv", u"Show - 03.srt")
+    scan = tsubasa.scan(str(tmp_path))
+    assert scan.unpaired() == [], u"the language-blind answer must not change"
+
+    missing = dict((v.name, why) for v, why in scan.unpaired(lang=u"ja"))
+    assert sorted(missing) == [u"Show - 01.mkv", u"Show - 03.mkv"]
+    assert u"(en)" in missing[u"Show - 01.mkv"]
+    # ⚠ hato's rule: an untagged `<video>.srt` is NOT the target language
+    assert u"untagged" in missing[u"Show - 03.mkv"]
+
+    asked = [v.name for v, _ in scan.unpaired(lang=u"ja")]
+    for spelling in (u"jpn", u"JA", u"ja-JP", u" ja "):
+        assert [v.name for v, _ in scan.unpaired(lang=spelling)] == asked, \
+            spelling
+
+
+def test_an_unrecognised_language_RAISES_instead_of_unpairing_everything(
+        tmp_path):
+    _touch(tmp_path, u"Show - 01.mkv", u"Show - 01.ja.srt")
+    scan = tsubasa.scan(str(tmp_path))
+    with pytest.raises(ValueError) as exc:
+        scan.unpaired(lang=u"japanese")
+    assert u"japanese" in str(exc.value)
+    assert [v.name for v, _ in scan.unpaired(lang=u"und")] == \
+        [u"Show - 01.mkv"], u"`und` is a real request: no untagged subtitle"
+
+
+def test_a_subtitle_is_retimed_against_ANOTHER_SUBTITLE_and_nothing_is_written(
+        tmp_path):
+    ref = _timeline()
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    late = _sub(tmp_path / u"late.ja.srt", [t + 2.5 for t in ref])
+    before = sorted(os.listdir(str(tmp_path)))
+
+    r = tsubasa.sync_to_reference(late, reference)
+
+    assert r.outcome == V.CONFIDENT, r.reason
+    assert abs(r.offset - (-2.5)) < 0.05, r.offset
+    assert len(r.segments) == 1
+    assert u"ref.en.srt" in r.reference, u"the source is named, never hidden"
+    assert r.video is None and r.lang == u"ja"
+    assert any(u"cannot tell whether that file agrees with the video" in n
+               for n in r.notes), r.notes
+    assert sorted(os.listdir(str(tmp_path))) == before, \
+        u"sync_to_reference wrote something"
+
+
+def test_a_broadcast_CUT_comes_back_as_two_segments_and_renders_onto_the_reference(
+        tmp_path):
+    ref = _timeline()
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    cut = _sub(tmp_path / u"cut.ja.srt",
+               [t + 2.5 if t < 700 else t + 12.5 for t in ref])
+
+    r = tsubasa.sync_to_reference(cut, reference)
+    assert r.outcome == V.CONFIDENT, r.reason
+    assert len(r.segments) == 2, r.segments
+
+    out = tsubasa.render(r)
+    starts = _starts_of(out.data)
+    assert out.ext == u".srt"
+    assert len(starts) + out.dropped_in_gap + out.dropped_before_zero == \
+        len(ref), u"a cue went missing without being counted"
+    off = [t for t in starts if min(abs(t - x) for x in ref) > 0.05]
+    assert not off, u"%d rendered cues do not land on the reference" % len(off)
+
+
+def test_render_keeps_the_subtitle_in_its_ORIGINAL_ENCODING(tmp_path):
+    u"""⛔ `LEDGER-HOT.md`: an ASCII fixture cannot test an encoding rule —
+    so this one is Shift-JIS, and the bytes must NOT come back as UTF-8."""
+    ref = _timeline()
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    late = _sub(tmp_path / u"late.ja.srt", [t + 2.5 for t in ref],
+                text=u"祈りが満ちて %d", encoding="shift_jis")
+
+    r = tsubasa.sync_to_reference(late, reference)
+    assert r.outcome == V.CONFIDENT, r.reason
+    data = tsubasa.render(r).data
+    assert u"祈りが満ちて 1\n" in data.decode("shift_jis").replace(u"\r", u"")
+    with pytest.raises(UnicodeDecodeError):
+        data.decode("utf-8")
+
+
+def test_render_REFUSES_a_refusal_unless_forced_and_NEVER_renders_an_ERROR(
+        tmp_path):
+    ref = _timeline()
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    rng = random.Random(99)
+    unrelated = _sub(tmp_path / u"other.ja.srt",
+                     sorted(round(rng.uniform(5.0, 1400.0), 3) for _ in ref))
+
+    r = tsubasa.sync_to_reference(unrelated, reference)
+    assert r.outcome == V.REFUSED, (r.outcome, r.reason)
+    with pytest.raises(ValueError) as exc:
+        tsubasa.render(r)
+    assert u"force=True" in str(exc.value)
+    assert tsubasa.render(r, force=True).data, u"forced means rendered"
+
+    error = tsubasa.sync_to_reference(unrelated, tmp_path / u"missing.srt")
+    assert error.outcome == V.ERROR
+    with pytest.raises(ValueError) as exc:
+        tsubasa.render(error, force=True)
+    assert u"never measured" in str(exc.value)
+
+
+def test_sync_to_reference_ERRORS_on_the_obvious_mistakes(tmp_path):
+    ref = _timeline()
+    reference = _sub(tmp_path / u"ref.en.srt", ref)
+    video = tmp_path / u"Show - 01.mkv"
+    video.write_bytes(b"")
+    (tmp_path / u"folder.srt").mkdir()
+    thin = _sub(tmp_path / u"thin.en.srt", ref[:3])
+
+    cases = [
+        (u"same file", reference, reference, u"the same file"),
+        (u"missing", reference, tmp_path / u"nope.srt", u"does not exist"),
+        (u"directory", reference, tmp_path / u"folder.srt", u"is a directory"),
+        (u"video as reference", reference, video, u"is a video"),
+        (u"video as subtitle", video, reference, u"is a video"),
+        # ⭐ The verdict's own floor and its own sentence — not a copy of it.
+        (u"thin reference", reference, thin, u"at least 5 are needed"),
+    ]
+    for label, subtitle, against, said in cases:
+        r = tsubasa.sync_to_reference(subtitle, against)
+        assert r.outcome == V.ERROR, (label, r.outcome, r.reason)
+        assert said in r.reason, (label, r.reason)

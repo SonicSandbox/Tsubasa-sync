@@ -13,6 +13,15 @@ over it (spec/05-interface.md).
     results = sync(cands, write=True)           # the only call that writes.
     fit     = align(reference_starts, subtitle_starts, duration)
 
+For an application building on it (spec/05-interface.md §For code built on
+tsubasa):
+
+    check = self_check()                        # is this install whole?
+    todo  = cands.unpaired(lang="ja")           # videos with no Japanese sub
+    r     = sync_to_reference(sub, other_sub)   # a subtitle against a subtitle
+    data  = render(r).data                      # retimed bytes; caller writes
+    side  = parse_subtitle_name("Show.ja[cc].srt")   # stem, lang, tag, flags
+
 ⚠ THESE NAMES ARE A COMPATIBILITY PROMISE (spec/RUNBOOK.md step 3b). hato pins
 four shapes through them -- the parser, discovery, the sidecar reader and
 `align()` -- so they are added to, never renamed.
@@ -59,7 +68,16 @@ __version__ = "0.1.0"
 from .align import align                                      # noqa: E402,F401
 from .api import Candidacy, Result, Scan, scan                 # noqa: E402,F401
 from .container.ffmpeg import set_location as set_ffmpeg       # noqa: E402,F401
-from .pipeline import SyncReport, sync                         # noqa: E402,F401
+from .pipeline import (Rendered, SyncReport, render,           # noqa: E402,F401
+                       sync, sync_to_reference)
+from .selfcheck import SelfCheck, self_check                   # noqa: E402,F401
+# ⭐ The sidecar reader was already one of the four frozen shapes hato pins; it
+# was reachable only as `tsubasa.sidecar.parse`, which reads like an internal.
+from .sidecar import Sidecar                                   # noqa: E402,F401
+from .sidecar import parse as parse_subtitle_name              # noqa: E402,F401
 
 __all__ = ["align", "scan", "sync", "set_ffmpeg", "Result", "Scan",
-           "Candidacy", "SyncReport", "__version__"]
+           "Candidacy", "SyncReport", "__version__",
+           # added 2026-09-16 for code built on tsubasa -- never renamed
+           "self_check", "SelfCheck", "sync_to_reference", "render",
+           "Rendered", "parse_subtitle_name", "Sidecar"]

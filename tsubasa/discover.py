@@ -36,6 +36,7 @@ and that mistake was made three separate times in one session
 """
 import os
 
+from . import sidecar as _sidecar
 from .formats import KNOWN_SUBTITLE_EXT
 from .container import KNOWN_VIDEO_EXT
 
@@ -212,6 +213,68 @@ class Item(object):
     @property
     def title(self):
         return self.parsed.title if self.parsed else u""
+
+    # -- ⭐ THE PUBLIC READING OF A NAME, for code built on top of tsubasa ----
+    #
+    # hato asks *which show and episode is this video* to search jimaku, and
+    # *does it already have a Japanese subtitle* to decide whether to fetch.
+    # Both answers already existed — `key`, `parsed.candidates`, the sidecar
+    # reader — and were reachable only by knowing which internal shape
+    # `parsed` happened to be. These name them. ⛔ Derived, never stored: no
+    # new slot, so nothing that builds an `Item` changes.
+
+    @property
+    def season(self):
+        u"""The season, or None. ⚠ Read it WITH `episode` — see `key`."""
+        return self.key[0]
+
+    @property
+    def episode(self):
+        u"""The episode, or None. -> int, or a float for a half episode.
+
+        ⛔ `13.5` stays `13.5`. Never round it and never truncate it to 13 —
+        `hato/spec/06-edge-cases.md` rules half episodes are matched literally.
+        When the parsers disagreed this is the one discovery went with; the
+        whole set is `episode_candidates`.
+        """
+        return self.key[1]
+
+    @property
+    def episode_candidates(self):
+        u"""Every episode the parsers proposed, best first. -> tuple
+
+        ⭐ One entry when they agreed. More than one is a name discovery could
+        not settle on its own, which `sync()` decides by timing — a caller
+        searching a subtitle site with it should search for each.
+        """
+        found = getattr(self.parsed, "candidates", None)
+        if found:
+            return tuple(found)
+        return () if self.episode is None else (self.episode,)
+
+    @property
+    def lang(self):
+        u"""A subtitle's language: `ja`, `en`, `zh`… or `und`. None for a video.
+
+        ⭐ RESOLVED, through the one reader the naming and dedupe rules use, so
+        `.jpn.`, `.JA.` and `.ja-JP.` all read `ja` and `.ja[cc].` does too.
+        ⚠ `und` means *the name carries no language*, not *unknown to us*.
+        """
+        if self.kind != u"subtitle":
+            return None
+        return _sidecar.parse(self.name).lang
+
+    @property
+    def lang_tag(self):
+        u"""The language exactly as the name wrote it (`jpn`, `ja-jp`), or ``""``.
+
+        ⭐ Kept apart from `lang` for the reason `Result.lang_tag` is: dedupe
+        needs the resolved code, and a name built for the user's other tools
+        needs what they wrote. None for a video.
+        """
+        if self.kind != u"subtitle":
+            return None
+        return _sidecar.parse(self.name).tag
 
     def __repr__(self):
         return "Item(%s, %s, %r)" % (self.kind, self.name[:28],

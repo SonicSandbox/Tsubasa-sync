@@ -256,16 +256,37 @@ class Scan(object):
                 out.append((video, cands))
         return out
 
-    def unpaired(self):
+    def unpaired(self, lang=None):
         u"""Videos no subtitle was offered for. -> [(`discover.Item`, reason)]
 
         🚨 Not a refusal and not an error -- a folder with 24 videos and 20
         subtitles has four of these and is working perfectly. It is reported
         because a silent nothing reads as success (`doctrine/robustness`).
+
+        `lang`
+            ⭐ count only subtitles in this language. `unpaired(lang="ja")` is
+            *which videos have no Japanese subtitle*, the question a fetcher
+            asks — and without it a video carrying only an English subtitle
+            read as covered, so hato would never have fetched for it.
+            `ja`, `jpn`, `JA` and `ja-JP` all mean the same thing here.
+
+            ⚠ An UNTAGGED subtitle is `und` and counts as no language:
+            `hato/spec/06-edge-cases.md` rules that `<video>.srt` is **not**
+            the target language. ⛔ A tag this reader does not recognise
+            raises instead of quietly becoming `und`, because that would mark
+            every video in the library unpaired.
         """
+        want = None if lang is None else _language_asked_for(lang)
         out = []
         for video in self.videos:
-            if self.for_video(video):
+            offered = self.for_video(video)
+            if want is not None:
+                matching = [c for c in offered if c.subtitle.lang == want]
+                if not matching and offered:
+                    out.append((video, _other_languages_reason(want, offered)))
+                    continue
+                offered = matching
+            if offered:
                 continue
             out.append((video, self._nothing_reason(video)))
         return out
@@ -591,6 +612,38 @@ def _same_film(video_name, subtitle_name):
         return (video_name.year is not None
                 and video_name.year == subtitle_name.year)
     return False
+
+
+def _language_asked_for(lang):
+    u"""A caller's language, resolved exactly as a filename's is. -> code
+
+    ⭐ THROUGH THE SAME READER, so `unpaired(lang="jpn")` and a file named
+    `.ja-JP.srt` can never disagree about what Japanese is.
+    ⛔ Unrecognised RAISES. Resolving it to `und` would compare every subtitle
+    against *no language* and report the whole library unpaired — a
+    confidently wrong answer to a typo.
+    """
+    token = (u"%s" % (lang,)).strip().lower()
+    if token == u"und":
+        return token
+    code = _sidecar._language_of(token)
+    if code is None:
+        raise ValueError(
+            u"%r is not a language tag tsubasa reads from filenames. Use an "
+            u"ISO 639 code as it appears in a name: ja, jpn, en, eng, zh, "
+            u"ja-JP. (`und` asks for subtitles whose name carries no "
+            u"language.)" % (lang,))
+    return code
+
+
+def _other_languages_reason(want, offered):
+    u"""Why a video with subtitles still counts as unpaired for `want`."""
+    found = sorted(set(c.subtitle.lang for c in offered))
+    said = [u"untagged" if code == u"und" else code for code in found]
+    return (u"no %s subtitle among the %d offered for it (%s)%s"
+            % (want, len(offered), u", ".join(said),
+               u" — an untagged name is not taken to be any language"
+               if u"und" in found else u""))
 
 
 def _same_roots(a, b):

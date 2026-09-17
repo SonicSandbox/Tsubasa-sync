@@ -305,6 +305,72 @@ jobs:
           PY
 
   # =========================================================================
+  # 🚨 DOES A FROZEN APPLICATION GET THE DATA?
+  # =========================================================================
+  #
+  # ⛔ MEASURED 2026-09-16 before the hook existed: a PyInstaller build of a
+  # plain `import tsubasa`, from the real wheel, ran with 0 alias entries and
+  # settled a cross-script pair `unsure` — exit 0, nothing raised. The first
+  # consumer of this library (Anki Miner) ships PyInstaller builds.
+  #
+  # ⭐ So a frozen app is BUILT and RUN here, from the wheel, outside the
+  # source tree, with nothing tsubasa-specific in the build command — exactly
+  # what an application author would do. It asserts the instrument
+  # (`self_check().ok`) AND the consequence (the pair settles `same`), because
+  # an instrument that agrees with itself proves less than one that agrees
+  # with the product.
+  frozen:
+    name: a frozen app carries the data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel and install it with PyInstaller
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+          python -m pip install dist/*.whl pyinstaller
+
+      - name: Freeze an app that only says import tsubasa, and run it
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/frozen && cd /tmp/frozen
+          cat > probe.py <<'PY'
+          import os, sys, tempfile
+          import tsubasa
+
+          # ⚠ A frozen app ignores PYTHONIOENCODING. The reporter must not be
+          # the thing that fails -- measured on a Windows build, where it did.
+          sys.stdout.reconfigure(errors="backslashreplace")
+          assert getattr(sys, "frozen", False), "this probe did not run frozen"
+          check = tsubasa.self_check()
+          print(check)
+          for sentence in check.problems:
+              print("PROBLEM:", sentence)
+
+          root = tempfile.mkdtemp()
+          for rel in ("videos/[NanakoRaws] Yomi no Tsugai S01E18 (AT-X TV 1080p HEVC AAC).mkv",
+                      "subs/黄泉のツガイ.S01E18.WEBRip.ABEMA.ja[cc].srt"):
+              path = os.path.join(root, rel)
+              os.makedirs(os.path.dirname(path), exist_ok=True)
+              open(path, "wb").close()
+          scan = tsubasa.scan(videos=os.path.join(root, "videos"),
+                              subs=os.path.join(root, "subs"))
+          identities = [c.identity for _v, cands in scan.pairings() for c in cands]
+          print("cross-script pair identity:", identities)
+
+          ok = check.ok and identities == ["same"]
+          sys.exit(0 if ok else 1)
+          PY
+          python -m PyInstaller --onedir --noconfirm --log-level WARN probe.py
+          ./dist/probe/probe
+
+  # =========================================================================
   # The licence is a file people rely on, so it is checked like one.
   # =========================================================================
   licence:

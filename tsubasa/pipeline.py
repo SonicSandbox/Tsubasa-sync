@@ -54,6 +54,7 @@ ignoring it would leave the user believing they had overridden something.
 import os
 
 from . import api as _api
+from . import apply as _apply
 from . import arbitrate as _arbitrate
 from . import dedupe as _dedupe
 from . import duration as _duration
@@ -333,6 +334,187 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
                       keep_all=keep_all, out_dir=out_dir,
                       trash_root=trash_root, sender=sender, reader=reader,
                       force=force, vad=vad, notes=notes, results=results)
+
+
+# ---------------------------------------------------------------------------
+# ⭐ a subtitle against ANOTHER SUBTITLE, and the bytes of a result
+# ---------------------------------------------------------------------------
+
+def sync_to_reference(subtitle, reference):
+    u"""Retime `subtitle` against another subtitle FILE. -> `Result`
+
+        r = sync_to_reference("Show - 01.ja.srt", "Show - 01.en.srt")
+        if r.outcome == "CONFIDENT":
+            data = render(r).data          # the retimed file, as bytes
+
+    ⛔ WRITES NOTHING, and there is no switch that makes it. `render()` gives
+    the retimed bytes and the caller writes them — under its own name, beside
+    whatever it likes, with its own rules about what may be replaced. A path a
+    caller names is exactly where `os.replace` would destroy somebody's file,
+    and the slot machinery that protects `sync(write=True)` is built around a
+    video this call does not have.
+
+    ⭐ NOTHING HERE IS A SECOND ALIGNER. The reference file becomes a
+    `Reference` — cue starts, a kind, a description — and from there it is the
+    same `measure()`, the same `judge()` and the same verdict bands as a
+    video's embedded track, so this can never come to disagree with `sync()`
+    about what a good alignment is.
+
+    ⚠ THE KIND IS `text track`, AND THAT IS A CLAIM ABOUT THE EVIDENCE. The
+    bands were fitted on text cue starts against text cue starts; an external
+    text subtitle is that population, and a new kind would have needed bands
+    nobody has measured — `verdict()` raises on one it does not know.
+    `Result.reference` names the file, so the source is never hidden.
+
+    🚨 WHAT THIS CANNOT TELL YOU: whether `reference` is itself in time with
+    the video. The result is *these two agree*, never *this now matches the
+    picture* — a reference that is 2 s late produces a subtitle 2 s late with
+    a perfect match rate.
+
+    🚨 AND A PARTIAL REFERENCE IS JUDGED ON THE PART IT COVERS. An embedded
+    track spans its whole video, so the verdict was fitted on references that
+    cover everything; a reference FILE need not. MEASURED 2026-09-16 against
+    a 266-cue subtitle shifted 2.5 s: a reference of its first 5 cues came
+    back `fair` with `runtime_check='absent'`, and one of its first **12**
+    cues — the opening minute of 23 — came back **`locked`** with
+    `runtime_check='weak'`. The offset was right because the shift was
+    constant; a cut after minute one would have been invisible to it.
+    ⭐ `Result.runtime_check` is the field that tells these apart: `held`
+    means the verdict walked the runtime and it held, `weak` and `absent`
+    mean it had little or nothing to walk. A caller aligning against
+    references it did not make should read it. ⚠ No threshold is imposed
+    here, because none has been measured — that is a ruling, not a default.
+
+    ⚠ The runtime gate has nothing to compare against, because a subtitle
+    file has no runtime of its own, so `duration_verdict` answers UNKNOWN and
+    the aligner spreads its chance baseline over the cues' own span. Both are
+    the documented behaviour for an unprobed video, not a special case.
+    """
+    subtitle = os.path.abspath(str(subtitle))
+    reference = os.path.abspath(str(reference))
+
+    for label, path in ((u"subtitle", subtitle), (u"reference", reference)):
+        refusal = _not_a_subtitle_file(label, path)
+        if refusal:
+            return _api.Result(None, subtitle, ERROR, reason=refusal,
+                               notes=[u"refused before anything was opened"])
+    if _explicit._same_file(subtitle, reference):
+        return _api.Result(
+            None, subtitle, ERROR,
+            reason=u"the subtitle and the reference are the same file: %s"
+                   % subtitle,
+            notes=[u"refused before anything was opened"])
+
+    parsed = _formats.read_file(reference)
+    if not parsed.ok:
+        return _api.Result(
+            None, subtitle, ERROR,
+            reason=u"the reference %s could not be read as a subtitle: %s"
+                   % (os.path.basename(reference), parsed.reason))
+    starts = [c.start for c in parsed.cues]
+    # ⛔ NO THIN-REFERENCE GUARD HERE, AND ONE WAS WRITTEN AND DELETED. The
+    # verdict already answers a reference too thin to measure against — ERROR,
+    # *"the reference has 3 cues and at least 5 are needed on both sides"* —
+    # at exactly the same boundary: measured at 0, 1, 3, 4 and 5 cues, with
+    # and without the guard, and the outcome never differed. Its mutant was
+    # killed only by its own wording. Two copies of one floor is one that can
+    # be changed and leave the other wrong (`doctrine/tooling`).
+
+    ref = Reference(starts, TEXT_TRACK,
+                    u"subtitle file %s (%d cues)"
+                    % (os.path.basename(reference), len(starts)),
+                    None)
+    m = measure(None, subtitle, ref)
+    judge([m], clusters_for([m]))
+    return _result_for(
+        None, m, _outcome_of(m), _reason_of(m),
+        notes=[u"aligned against a subtitle file, not a video: this makes "
+               u"the subtitle agree with %s, and cannot tell whether that "
+               u"file agrees with the video" % os.path.basename(reference)])
+
+
+def _not_a_subtitle_file(label, path):
+    u"""-> a sentence when `path` cannot be the `label` side, else ``""``."""
+    if os.path.isdir(path):
+        return u"the %s is a directory, not a file: %s" % (label, path)
+    if not os.path.isfile(path):
+        return u"the %s does not exist: %s" % (label, path)
+    ext = os.path.splitext(path)[1].lower()
+    from .container import KNOWN_VIDEO_EXT
+    if ext in KNOWN_VIDEO_EXT:
+        # ⭐ The one mistake worth naming: this call is for two SUBTITLES, and
+        # the video call is right next to it.
+        return (u"the %s is a video (%s). This call aligns a subtitle against "
+                u"another subtitle; for a video use "
+                u"sync([(video, subtitle)])" % (label, os.path.basename(path)))
+    return u""
+
+
+class Rendered(object):
+    u"""A retimed subtitle, not yet on disk. See `render()`."""
+
+    __slots__ = ("data", "ext", "dropped_in_gap", "dropped_before_zero")
+
+    def __init__(self, data, ext, dropped_in_gap, dropped_before_zero):
+        self.data = data
+        self.ext = ext
+        self.dropped_in_gap = dropped_in_gap
+        self.dropped_before_zero = dropped_before_zero
+
+    def __repr__(self):
+        return "Rendered(%d bytes, %s, %d dropped in a cut, %d before zero)" % (
+            len(self.data), self.ext, self.dropped_in_gap,
+            self.dropped_before_zero)
+
+
+class _Rendering(object):
+    u"""The two attributes `apply._render` reads, taken from a `Result`."""
+
+    __slots__ = ("path", "verdict")
+
+    def __init__(self, result):
+        self.path = result.subtitle
+        self.verdict = result
+
+
+def render(result, force=False):
+    u"""The retimed subtitle a `Result` describes, as bytes. -> `Rendered`
+
+    ⛔ WRITES NOTHING. It is for a caller that writes files its own way —
+    `<name>_retimed.srt`, a temp directory, a database — and works on any
+    `Result`: from `sync()` in a dry run as well as from `sync_to_reference()`.
+
+    ⭐ THE SAME RENDERER `sync(write=True)` USES, so the rules are the ones the
+    written files already obey: the subtitle is RE-READ rather than trusted
+    from the measurement, a cue straddling a cut keeps its duration and cannot
+    invert, only the two whitelisted removals ever drop a cue, and the bytes
+    come back **in the file's original format and encoding**. `Rendered`
+    counts both removals so a caller can report them.
+
+    `force`
+        ⚠ Renders a REFUSED result. The alignment was measured and judged not
+        good enough to trust; this writes it anyway, and it is the most
+        dangerous thing this library does. An ERROR has no measured offset at
+        all and is never rendered.
+
+    Raises `ValueError` with a sentence for anything it will not render: an
+    ERROR, a REFUSED result without `force`, a subtitle that no longer reads
+    or now holds no cues, and an offset that would drop every cue.
+    """
+    outcome = getattr(result, "outcome", None)
+    if outcome == ERROR or not getattr(result, "segments", None):
+        raise ValueError(
+            u"%s was never measured (%s), so there is no offset to apply — "
+            u"a file is never retimed by a number nobody measured"
+            % (os.path.basename(getattr(result, "subtitle", "") or u"?"),
+               getattr(result, "reason", u"") or u"no segments"))
+    if outcome != CONFIDENT and not force:
+        raise ValueError(
+            u"%s was measured and REFUSED: %s. Pass force=True to render it "
+            u"anyway." % (os.path.basename(result.subtitle), result.reason))
+    data, in_gap, before_zero = _apply._render(_Rendering(result))
+    return Rendered(data, os.path.splitext(result.subtitle)[1], in_gap,
+                    before_zero)
 
 
 def _vad_note():
@@ -1830,7 +2012,13 @@ def _reason_of(m):
 
 def _episode_number(path):
     u"""The episode this video is, as an int, or None. ⚠ Never a string:
-    padding it is the caller's decision and this object should not have one."""
+    padding it is the caller's decision and this object should not have one.
+
+    ⚠ No video, no episode: `sync_to_reference` measures a subtitle against
+    another subtitle and there is no video path to read one from.
+    """
+    if not path:
+        return None
     got = _episode_of(path)
     number = getattr(got, "episode", None) if got is not None else None
     return number if isinstance(number, int) else None

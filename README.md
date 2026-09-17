@@ -180,6 +180,51 @@ against your working directory.
 **ffmpeg is only needed** for containers the native reader can't open and for
 audio analysis. A Matroska file with a subtitle track never touches it.
 
+### Check the install from your own app
+
+```python
+check = tsubasa.self_check()
+if not check.ok:
+    for sentence in check.problems:
+        log.warning("tsubasa: %s", sentence)
+```
+
+tsubasa's data files are optional by design, so **a broken install is silent**:
+it runs, and settles far fewer pairs by name. `self_check()` is how you find
+out. It opens none of your files and runs nothing.
+
+**Freezing with PyInstaller needs nothing extra.** tsubasa ships a hook that
+PyInstaller finds on its own. With any other freezer, copy `tsubasa/data/` in
+beside the package — and call `self_check()` in your smoke test either way.
+
+### A subtitle against another subtitle
+
+```python
+r = tsubasa.sync_to_reference("Show - 01.ja.srt", "Show - 01.en.srt")
+if r.outcome == "CONFIDENT":
+    out = tsubasa.render(r)            # bytes, in the file's original encoding
+    Path("Show - 01.ja_retimed.srt").write_bytes(out.data)
+```
+
+Nothing is written for you. `render()` works on any result — a dry run of
+`sync()` too — so your app names and places files its own way.
+
+> ⚠ This makes the two subtitles **agree with each other**. It can't know
+> whether the reference matches the video, and a reference covering only part
+> of the episode is judged on that part. Check `r.runtime_check`: `held` means
+> the whole runtime was checked.
+
+### Reading names
+
+```python
+scan = tsubasa.scan("/media/anime")
+video = scan.videos[0]
+video.title, video.season, video.episode        # "Show", 2, 7
+
+scan.unpaired(lang="ja")                        # videos with no Japanese subtitle
+tsubasa.parse_subtitle_name("Show.ja[cc].srt")  # stem, lang "ja", tag "ja[cc]"
+```
+
 ### What comes back
 
 `Result` carries the outcome (`CONFIDENT` / `REFUSED` / `ERROR`), per-segment

@@ -69,6 +69,13 @@ tsubasa = "tsubasa.cli:main"
 [project.gui-scripts]
 tsubasa-gui = "tsubasa.gui.app:main"
 
+# ⭐ HOW PyInstaller FINDS THE HOOK THAT SHIPS INSIDE THIS PACKAGE, so an
+# application freezing tsubasa changes nothing in its own build. ⛔ Without it
+# a frozen app carried 0 alias entries and nothing said so — measured
+# 2026-09-16; `tsubasa/__pyinstaller/__init__.py` has the numbers.
+[project.entry-points.pyinstaller40]
+hook-dirs = "tsubasa.__pyinstaller:get_hook_dirs"
+
 [project.urls]
 Homepage = "https://github.com/SonicSandbox/Tsubasa-sync"
 Source = "https://github.com/SonicSandbox/Tsubasa-sync"

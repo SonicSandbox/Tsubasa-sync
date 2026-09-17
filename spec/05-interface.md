@@ -287,6 +287,38 @@ non-confident outcome carrying a confidence word **raises** (`LEDGER.md` §Inter
 defect), and an `ERROR` carrying an `output_path` **raises** — ERROR means never measured,
 so there was no offset to have written.
 
+### ⭐ For code built on tsubasa — ADDED 2026-09-16, never renamed
+
+Two consumers were checked against the shipped API before 0.1.0: **hato** (spec only) and
+**Anki Miner** (a GPL-3.0 PyQt app that freezes with PyInstaller). Both were found
+reaching into internals for answers the library already had. These name them. ⛔ **All
+additive:** nothing above changed shape, and hato's four pinned shapes are untouched.
+
+```python
+import tsubasa
+
+check = tsubasa.self_check()                  # is this install whole?
+video.title, video.season, video.episode      # a discovered video, read
+video.episode_candidates                      # every episode the parsers proposed
+subtitle.lang, subtitle.lang_tag              # "ja" and "jpn" — resolved, and as written
+scan.unpaired(lang="ja")                      # videos with no JAPANESE subtitle
+
+r = tsubasa.sync_to_reference(sub, other_sub) # a subtitle against a subtitle. Writes nothing
+out = tsubasa.render(r)                       # the retimed bytes, original encoding
+side = tsubasa.parse_subtitle_name("Show.ja[cc].srt")   # the sidecar reader, by name
+```
+
+| Added | Why it had to exist |
+| --- | --- |
+| `self_check()` → `SelfCheck` | 🚨 **Both data files fail open, so a broken install is silent.** Measured: a PyInstaller build of a plain `import tsubasa` ran with **0 alias entries**, exit 0. `ok` answers *is anything silently worse than it should be* — each table against the size its **own header declares**, so a truncated table fails where a floor would pass it. ffmpeg and the optional parsers are reported in `notes` and never counted: they fail loudly when needed |
+| `Item.season` · `episode` · `episode_candidates` | Derived from `key`, never stored. ⛔ `13.5` stays a float — hato's `06-edge-cases.md` matches half episodes literally |
+| `Item.lang` · `lang_tag` | The structured language field, on a *discovered* subtitle — `Result` had it and `Scan` did not. None for a video |
+| `Scan.unpaired(lang=)` | 🚨 **Language-blind, a video carrying only an English subtitle read as covered**, so a Japanese fetcher never fetched for it. An untagged name is `und` and counts as no language (hato's rule). An unrecognised tag **raises** — resolving it to `und` would mark the whole library unpaired |
+| `sync_to_reference(subtitle, reference)` | A subtitle against another subtitle FILE. ⭐ The same `measure` → `judge` → verdict as a video's track — the file becomes a `Reference` of kind `text track`, which is the population the bands were fitted on. **Writes nothing.** 🚨 A partial reference is judged on the part it covers — see its docstring and read `runtime_check` |
+| `render(result, force=False)` → `Rendered` | The retimed bytes for any `Result`, through the renderer `sync(write=True)` uses: original encoding, cut-straddling cues anchored to their start, both whitelisted removals counted. ⛔ A path the caller names is where `os.replace` destroys a file, so this returns bytes and the caller writes |
+| `parse_subtitle_name` · `Sidecar` | The sidecar reader was already one of hato's four frozen shapes, reachable only as `tsubasa.sidecar.parse` |
+| `tsubasa/__pyinstaller/` | Registered under the `pyinstaller40` entry point, so an application freezing tsubasa changes nothing in its own build. The same build that carried 0 entries carried 221,258. ⚠ **PyInstaller only** — `self_check()` is how any other freezer finds out |
+
 ---
 
 ## Naming and dedupe
