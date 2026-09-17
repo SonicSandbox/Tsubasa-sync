@@ -222,6 +222,29 @@ def _tk_root():
     """
     import warnings
     tk = pytest.importorskip(u"tkinter")
+
+    # ===================================================================
+    # 🚨 DPI-AWARE FIRST, EXACTLY AS `app.make_root()` DOES
+    # ===================================================================
+    # `make_process_dpi_aware` MUST run before the first `Tk()` in a process:
+    # Tk reads the screen metrics once, and afterwards the call still succeeds
+    # while every number in the process is of a virtualised 96 dpi screen.
+    #
+    # ⛔ FOUND 2026-09-17, AND IT WAS AN ORDER DEPENDENCY, NOT A NEW BUG.
+    # `test_the_window_opens_at_the_size_it_was_built_to_be` measured 239.6 dpi
+    # and passed — but only because the test defined immediately ABOVE it
+    # happens to call `make_process_dpi_aware()`. Adding checks earlier in this
+    # file moved the process's first root ahead of that call, the DPI read 95.8,
+    # and the check turned itself into a SKIP. ⚠ A skip is the worst outcome
+    # here: it is green, and the thing it guards (a window that clipped its own
+    # button off the screen) went unguarded.
+    #
+    # ⭐ Making it unconditional costs nothing, matches the shipped path, and
+    # removes a landmine under every future check in this file. It is safe to
+    # call repeatedly — `E_ACCESSDENIED` means *already set*, which the
+    # function treats as success.
+    SCALE.make_process_dpi_aware()
+
     message = u""
     for attempt in range(1, TK_START_ATTEMPTS + 1):
         try:
@@ -724,6 +747,212 @@ def test_TSUBASA_CLI_overrides_how_the_cli_is_invoked(monkeypatch):
     assert RUN.cli_argv() == [u"/bin/false", u"--x"]
     monkeypatch.setenv(u"TSUBASA_CLI", u"/bin/false")
     assert RUN.cli_argv() == [u"/bin/false"]
+
+
+def test_the_FROZEN_branch_looks_for_the_cli_BESIDE_the_executable(monkeypatch):
+    u"""🚨 RUNBOOK 4c TRAP 1, AND IT DECIDES THE WHOLE STANDALONE BUILD.
+
+    `STANDALONE-BUILD-SCOPE.md`: *ship only the GUI and every single run fails
+    at launch.* Frozen, `sys.executable` is the bundle, so `-m tsubasa` would
+    re-enter the GUI and open a SECOND WINDOW rather than run the CLI — the
+    console entry point beside it is used instead, which is why the `.spec`
+    file puts both executables in one `COLLECT`.
+
+    ⛔ **This branch had never run**; its own docstring said it was
+    `10-deployment.md`'s to finish at 4a. Written here before the first build,
+    so the freezer is not the thing that discovers it.
+
+    ⚠ Both platforms are driven, not just this machine's — the `.exe` suffix
+    is decided inside the branch, and macOS resumes against the POSIX half
+    (`STANDALONE-BUILD-SCOPE.md` §8b step 2).
+    """
+    monkeypatch.delenv(u"TSUBASA_CLI", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    home = os.path.join(os.sep + u"apps", u"tsubasa")
+
+    monkeypatch.setattr(sys, "executable",
+                        os.path.join(home, u"tsubasa-gui.exe"))
+    monkeypatch.setattr(sys, "platform", u"win32")
+    assert RUN.cli_argv() == [os.path.join(home, u"tsubasa.exe")]
+
+    monkeypatch.setattr(sys, "executable", os.path.join(home, u"tsubasa-gui"))
+    monkeypatch.setattr(sys, "platform", u"darwin")
+    assert RUN.cli_argv() == [os.path.join(home, u"tsubasa")]
+
+
+def test_an_UNFROZEN_run_still_goes_through_the_interpreter(monkeypatch):
+    u"""⚠ The other direction, and the one every developer runs. A branch that
+    fires unconditionally would send a source checkout looking for a
+    `tsubasa.exe` that does not exist — green on the build machine, broken
+    everywhere this is developed."""
+    monkeypatch.delenv(u"TSUBASA_CLI", raising=False)
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    assert RUN.cli_argv() == [sys.executable, u"-m", u"tsubasa"]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_a_CLI_THAT_CANNOT_BE_SPAWNED_says_so_and_does_not_wedge_the_app(
+        tmp_path):
+    u"""🚨 THE NEGATIVE OF TRAP 1, AND IT WAS A SILENT NO-OP.
+
+    Found by an adversarial pass, 2026-09-17, against three green checks that
+    had only ever driven the branch POSITIVELY. With `tsubasa.exe` removed
+    from beside the frozen GUI, pressing Sync produced **nothing at all** —
+    `neg-after.png` was byte-identical to the shot before the click — and the
+    app was then dead for good:
+
+      * `Popen` raised `FileNotFoundError` out of an unguarded
+        `self.runner.start()`;
+      * `self.runner` had already been assigned, so `running` stayed True FOR
+        EVER — the button never left *Stop*, the next click went to `stop()`
+        and raised `NotStarted`, and **restoring the missing file did not
+        help.** Only killing the app did;
+      * and `console=False` means `sys.stderr` is None, so Tk's default
+        handler printed the traceback precisely nowhere.
+
+    ⛔ Reach is not hypothetical: `README-FIRST.txt` warns that Defender may
+    quarantine a fresh download, and quarantining one executable and not the
+    other produces exactly this.
+
+    ⭐ Asserted on the SCREEN, not on a flag — `doctrine/verification`, and the
+    original symptom was a window that did not change.
+    """
+    def refuses(folder, **opts):
+        def popen(argv, **kwargs):
+            raise OSError(2, u"The system cannot find the file specified")
+        return RUN.Runner(folder, popen=popen, **opts)
+
+    root = _tk_root()
+    from tsubasa.gui import app as APP
+    s = SETTINGS.Settings({}, str(tmp_path / u"s.json"))
+    app = APP.App(root, settings=s, runner_factory=refuses)
+    try:
+        app.folder_var.set(str(tmp_path))
+        app.start()
+        root.update()
+
+        assert not app.running, u"the app is stuck believing a run is going"
+        assert app.runner is None, u"the dead runner was kept"
+        assert app.sync_btn.cget(u"text") == u"Sync", (
+            u"the button still offers to stop a run that never began")
+        said = app.message
+        assert u"could not be started" in said, said
+        assert u"tsubasa-gui.exe" in said, (
+            u"the sentence never names the fix — that both executables live "
+            u"in one folder: %r" % said)
+
+        # ⭐ AND IT RECOVERS. The original defect survived putting the file
+        # back, so a second attempt that works is the half that matters.
+        app.runner_factory = lambda folder, **opts: RUN.Runner(
+            folder, popen=fake_popen(stdout=ndjson(a_record()),
+                                     stderr=u"1 synced\n", code=0), **opts)
+        app.start()
+        for _ in range(200):
+            root.update()
+            if app.run is not None:
+                break
+            time.sleep(0.01)
+        assert app.run is not None, u"the app never recovered from the failure"
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_an_exception_in_ANY_callback_is_reported_rather_than_swallowed(
+        tmp_path):
+    u"""🚨 `console=False` MAKES EVERY BUTTON SILENT ON FAILURE.
+
+    `sys.stderr` is None in a windowed build, Tk's default
+    `report_callback_exception` prints there, `print` falls back to
+    `sys.stdout` — also None — and `print` is then a documented no-op. CPython's
+    own tkinter docstring says to override this when `sys.stderr` is None.
+
+    ⭐ The net under every OTHER button, because the next one will not be found
+    the way this one was. Asserted by driving a real Tk callback that raises
+    and requiring the override to be reached.
+    """
+    from tsubasa.gui import app as APP
+    root = _tk_root()
+    try:
+        seen = []
+        APP._make_failures_visible(
+            root, show=lambda title, detail: seen.append((title, detail)))
+        assert root.report_callback_exception is not \
+            APP.tk.Tk.report_callback_exception, u"the default was left in place"
+
+        # ⭐ THROUGH A REAL BUTTON, not by calling the hook. Tk routes a
+        # raising callback through `report_callback_exception` itself; a
+        # direct call would prove the function works and say nothing about
+        # whether Tk ever reaches it.
+        button = APP.tk.Button(root, command=_raises)
+        button.pack()
+        root.update()
+        button.invoke()
+        root.update()
+
+        assert seen, u"the exception was swallowed exactly as before"
+        title, detail = seen[0]
+        assert u"a button blew up" in detail, detail
+        assert u"ValueError" in detail, detail
+        assert u"tsubasa" in title, title
+    finally:
+        root.destroy()
+
+
+def _raises():
+    u"""A callback that fails, for the check above. ⚠ Module level: Tk calls
+    it through its own C loop, so a closure defined inside a `try` is fine but
+    reads as part of the test's control flow rather than as a fixture."""
+    raise ValueError(u"a button blew up")
+
+
+def test_a_tkdnd_THAT_IMPORTS_BUT_CANNOT_LOAD_falls_back_to_a_plain_root(
+        monkeypatch):
+    u"""🚨 GUARDING THE IMPORT IS NOT GUARDING THE TOOLKIT.
+
+    `tkinterdnd2` imports fine and then `TkinterDnD.Tk()` loads a **Tcl**
+    package from disk. Measured in the frozen app: renaming one file,
+    `_internal/tkinterdnd2/tkdnd/win-x64/libtkdnd2.10.2.dll`, replaced the
+    whole window with *"Failed to execute script 'entry_gui'"*. ⛔ The module's
+    own note promises it degrades to Browse with a stated reason, and that
+    path was **unreachable in a frozen build** — the Python module lives in
+    the PYZ and cannot go missing, so the only thing that CAN was the one
+    thing unguarded.
+
+    ⚠ No display needed: the fallback is asserted by which constructor is
+    reached, not by a window.
+    """
+    from tsubasa.gui import app as APP
+
+    class Exploding(object):
+        @staticmethod
+        def Tk():
+            raise RuntimeError(u"Unable to load tkdnd library.")
+
+    made = []
+    monkeypatch.setattr(APP, "TkinterDnD", Exploding)
+    monkeypatch.setattr(APP, "DND_FILES", u"DND_Files")
+    monkeypatch.setattr(APP, "DND_ERROR", u"")
+    monkeypatch.setattr(APP.tk, "Tk", lambda: made.append(u"plain") or u"root")
+
+    assert APP._dnd_root_or_plain() == u"root", u"no plain root was built"
+    assert made == [u"plain"]
+    # ⭐ ONE no-drop state, not two: `App` reads these to decide, so a failed
+    # LOAD must look exactly like a failed import or the footer says nothing.
+    assert APP.TkinterDnD is None and APP.DND_FILES is None
+    assert u"Unable to load tkdnd" in APP.DND_ERROR, APP.DND_ERROR
+
+
+def test_TSUBASA_CLI_still_wins_inside_a_frozen_app(monkeypatch):
+    u"""⭐ `STANDALONE-BUILD-SCOPE.md` trap 1: the override is *"how you can
+    point the GUI at a known-good CLI while bisecting"* — which is worth
+    nothing if the frozen branch outranks it, because frozen is the only state
+    anyone ever needs to bisect."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv(u"TSUBASA_CLI", u"/known/good/tsubasa")
+    assert RUN.cli_argv() == [u"/known/good/tsubasa"]
 
 
 @pytest.mark.parametrize("value", [u"[shincaps]/tsubasa", u'["a"', u"[]",

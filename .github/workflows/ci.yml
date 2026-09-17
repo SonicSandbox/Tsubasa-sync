@@ -424,6 +424,93 @@ jobs:
           ./dist/probe/probe
 
   # =========================================================================
+  # 🚨 THE WINDOWS STANDALONE, BUILT ON EVERY PUSH. RUNBOOK 4c.
+  # =========================================================================
+  #
+  # ⛔ `release.yml` only fires on a `v*` tag, so without this job the frozen
+  # zip is first built at the ONE moment it is most expensive to be wrong —
+  # with a burned tag, a PyPI upload in the same run, and a release page
+  # waiting. MEASURED 2026-09-17: at the moment the standalone was wired up,
+  # `packaging/` was untracked, and a tag that day would have published the
+  # wheel and failed the zip. Nothing would have said so beforehand.
+  #
+  # ⭐ So the whole path runs here — freeze, package, extract, drive — and
+  # attaches NOTHING anywhere. The tag then only has to do the upload.
+  #
+  # ⚠ The media half of the smoke test SKIPS here and says so: `00-INDEX.md`
+  # Rule 3 keeps every video out of the repository. The real-media half runs
+  # on the build machine against the corpus; `LEDGER.md` §Delivery records it.
+  # What this job proves is the BUILD — two executables in one folder, the
+  # data collected AND able to resolve a real name, the licences carried
+  # whole, the window opening, and the instrument able to report its own
+  # absence.
+  standalone:
+    name: the Windows standalone builds and runs
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # ⛔ FROM THE BUILT WHEEL, exactly as `release.yml` does and for the same
+      # reason: freezing the checkout puts development files in scope, which
+      # is how 0.1.0 shipped broken.
+      - name: Build the wheel and install it with every extra
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+          COUNT=$(ls -1 dist/*.whl | wc -l)
+          test "$COUNT" -eq 1 || { echo "$COUNT wheels in dist/"; exit 1; }
+          python -m pip install "$(ls dist/*.whl)[all]" pyinstaller
+
+      # ⛔ FROM A DIRECTORY THAT IS NOT THE CHECKOUT ROOT, or PyInstaller's
+      # analysis finds `./tsubasa/` instead of the installed wheel and every
+      # check below passes against files no downloader receives.
+      - name: Freeze — one spec, two executables, one COLLECT
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _freeze && cd _freeze
+          python -m PyInstaller --noconfirm --log-level WARN \
+            --distpath app --workpath build \
+            "$GITHUB_WORKSPACE/packaging/tsubasa.spec"
+          ls -la app/tsubasa/
+
+      - name: Assemble the zip and its checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/package_standalone.py _freeze/app \
+            --repo . --out _release
+          cat _release/SHA256SUMS
+
+      # ⭐ THE ZIP IS EXTRACTED AND DRIVEN — the artefact, not the folder it
+      # was made from. `doctrine/release`: assert the live artefact.
+      - name: Smoke-test THE ZIP
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c "import tsubasa; print(tsubasa.__version__)")
+          python packaging/smoke_standalone.py \
+            --zip _release/tsubasa-windows-x64.zip --version "$VERSION"
+
+      # ⚠ Kept, because a zip that built and passed is worth looking at when
+      # something later disagrees — and because it lets the acceptance test
+      # (a machine with no Python) happen from any commit, not only a tag.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: standalone-windows-x64-ci
+          path: _release/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # =========================================================================
   # The licence is a file people rely on, so it is checked like one.
   # =========================================================================
   licence:

@@ -451,7 +451,31 @@ class App(object):
         self.tree.delete(*self.tree.get_children())
         self._row_by_item = {}          # ⚠ see the note in `__init__`
         self._remember_folder(folder)
-        self.runner.start()
+        try:
+            self.runner.start()
+        except OSError as exc:
+            # 🚨 THE CHILD COULD NOT BE SPAWNED AT ALL, AND BEFORE THIS GUARD
+            # THAT WAS COMPLETELY SILENT. `Popen` raises `FileNotFoundError`
+            # when `tsubasa.exe` is not beside `tsubasa-gui.exe` — the exact
+            # state `STANDALONE-BUILD-SCOPE.md` trap 1 exists for, and the one
+            # Defender produces by quarantining one executable and not the
+            # other. Found by an adversarial pass driving the NEGATIVE of trap
+            # 1, which every check here had only ever driven positively.
+            #
+            # ⛔ AND `self.runner` MUST BE CLEARED, not just reported. It was
+            # assigned above, before the throwing call, so `running` —
+            # *runner is not None and finished() is None* — stayed True FOR
+            # EVER: the button never left "Stop", the next click went to
+            # `stop()` and raised `NotStarted`, and **putting the missing file
+            # back did not help.** Only killing the app did.
+            self.runner = None
+            self._say(
+                u"the command line could not be started: %s. This app runs "
+                u"%s. If this is the standalone, tsubasa.exe must sit in the "
+                u"same folder as tsubasa-gui.exe — antivirus quarantine is "
+                u"the usual reason one of them is missing."
+                % (exc, runner.argv[0] if runner.argv else u"?"))
+            return
         self._repaint()
         self.root.after(TICK_MS, self._tick)
 
@@ -935,8 +959,79 @@ def make_root():
     own button off the screen.*
     """
     awareness = make_process_dpi_aware()
-    root = TkinterDnD.Tk() if TkinterDnD is not None else tk.Tk()
+    root = _dnd_root_or_plain()
+    _make_failures_visible(root)
     return root, awareness
+
+
+def _dnd_root_or_plain():
+    u"""The root, with drag-and-drop if the toolkit actually WORKS. -> `tk.Tk`
+
+    🚨 GUARDING THE IMPORT IS NOT GUARDING THE TOOLKIT. `tkinterdnd2` imports
+    cleanly and then `TkinterDnD.Tk()` calls `_require`, which loads a **Tcl**
+    package from disk and raises `RuntimeError('Unable to load tkdnd
+    library.')` when it is not there.
+
+    ⛔ MEASURED IN THE FROZEN APP: renaming ONE file —
+    `_internal/tkinterdnd2/tkdnd/win-x64/libtkdnd2.10.2.dll` — replaced the
+    whole window with *"Failed to execute script 'entry_gui' due to unhandled
+    exception."* The module note above promises the opposite, and the footer
+    sentence that states the reason was **unreachable in a frozen build**: the
+    Python module lives in the PYZ and cannot go missing, so the only thing
+    that CAN go missing was the one thing not guarded.
+
+    ⭐ Falling back to a plain root costs the drop target and nothing else —
+    Browse still works, which is what `doctrine/architecture`'s *instruction,
+    not refusal* asks for.
+    """
+    global DND_FILES, TkinterDnD, DND_ERROR
+    if TkinterDnD is None:
+        return tk.Tk()
+    try:
+        return TkinterDnD.Tk()
+    except Exception as exc:                              # noqa: BLE001
+        # ⚠ The names are cleared too, so `App` takes the same no-drop branch
+        # it takes when the import failed — one state, not two.
+        DND_ERROR = u"%s: %s" % (type(exc).__name__, exc)
+        DND_FILES, TkinterDnD = None, None
+        return tk.Tk()
+
+
+def _make_failures_visible(root, show=None):
+    u"""🚨 A WINDOWED APP SWALLOWS EVERY EXCEPTION A BUTTON RAISES.
+
+    `console=False` means `sys.stdout` and `sys.stderr` are **None**. Tk's
+    default `report_callback_exception` prints to `sys.stderr`; `print` then
+    falls back to `sys.stdout`; with both None `print` is a documented no-op.
+    ⛔ So a callback that raised did **absolutely nothing observable** — no
+    dialog, no log, no change on screen. CPython's own `tkinter` docstring
+    says an application *"should override this when sys.stderr is None"*, and
+    this one did not.
+
+    ⭐ Measured by an adversarial pass: with `tsubasa.exe` removed, pressing
+    Sync left the window byte-identical and the app permanently wedged. The
+    specific cause is fixed in `start()`; this is the net under every OTHER
+    button, because the next one will not be found the same way.
+
+    ⚠ `show` IS INJECTED, and not only for the suite: a real `tk_messageBox`
+    BLOCKS until somebody clicks it, so a check that reached the shipped
+    delivery would hang the runner rather than fail it. The seam is the same
+    one `Runner(popen=)` and `sync(reader=)` use.
+    """
+    deliver = show or (lambda title, detail: messagebox.showerror(
+        title, detail, parent=root))
+
+    def report(exc_type, exc_value, _tb):
+        try:
+            deliver(u"tsubasa hit a problem it did not expect",
+                    u"%s: %s" % (exc_type.__name__, exc_value))
+        except Exception:                                 # noqa: BLE001
+            # ⛔ The reporter may not become the failure. `LEDGER-HOT.md` has
+            # three instruments killed by their own subject matter in one day,
+            # and this one runs in a process with no stream to complain on.
+            pass
+
+    root.report_callback_exception = report
 
 
 def main(argv=None):

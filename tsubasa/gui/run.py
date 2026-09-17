@@ -120,7 +120,11 @@ def cli_argv():
       * `TSUBASA_CLI` overrides both, which is how the suite drives a
         deliberately-failing child without inventing a fake process object.
 
-    ⚠ The frozen branch is `10-deployment.md`'s to finish at 4a.
+    ✅ The frozen branch was finished and first exercised at RUNBOOK **4c**
+    (2026-09-17): three checks here, a real Windows build, and the Sync button
+    pressed by mouse in the frozen app. ⚠ Its NEGATIVE — `tsubasa.exe` absent
+    from beside the GUI — was a silent no-op that wedged the app for ever, and
+    is now guarded in `app.start()`.
     """
     override = os.environ.get("TSUBASA_CLI")
     if override:
@@ -235,6 +239,17 @@ def child_env(base=None):
     before `main()` is reached, still goes out through the ANSI codepage, and
     on this corpus that means a `UnicodeEncodeError` about a Japanese path
     swallowing the real error. Set it on the process, not just on the streams.
+
+    ⚠ **AND IT DOES NOTHING WHEN THE CHILD IS FROZEN**, which is the
+    standalone's whole configuration. Measured 2026-09-17:
+    `PYTHONIOENCODING=nosuchcodec tsubasa.exe --version` exits 0 and prints
+    normally, where the same variable kills a stock interpreter at startup —
+    the PyInstaller bootloader runs Python isolated.
+    `STANDALONE-BUILD-SCOPE.md` trap 2 said so one page away from this module
+    and nobody connected the two. ⭐ It is still set, because it is correct for
+    the source path and costs nothing on the frozen one; what is gone on a
+    frozen child is only the pre-`main()` mitigation. The parent's
+    `errors="replace"` means neither case can crash the window.
     """
     env = dict(os.environ if base is None else base)
     env["PYTHONIOENCODING"] = "utf-8"

@@ -120,9 +120,226 @@ jobs:
           name: dist
           path: dist/
 
+  # =========================================================================
+  # 🚨 THE STANDALONE — A WINDOWS ZIP WITH NO PYTHON IN IT. RUNBOOK 4c.
+  # =========================================================================
+  #
+  # ⭐ THE SAME `v*` TAG AS PyPI, ruled by Sonic 2026-09-17: one version
+  # number, one release page. `v0.1.5` publishes the wheel AND attaches
+  # `tsubasa-windows-x64.zip`.
+  #
+  # ⛔ AND IT FREEZES THE ARTIFACT THE `build` JOB ALREADY MADE, never a wheel
+  # of its own. That is what makes *one version number* true rather than
+  # merely intended: the zip and the PyPI upload are the same bytes, and a
+  # second `python -m build` here would be a second artifact nothing compares.
+  #
+  # ⚠ WINDOWS ONLY. `STANDALONE-BUILD-SCOPE.md` §8: Linux is ruled a wrapper
+  # (a Linux user has Python, so freezing buys nothing but the `python3-tk`
+  # package), and macOS is HALTED — unsigned, a downloaded .app is blocked by
+  # Gatekeeper, and CI cannot reproduce that block because a locally built app
+  # carries no quarantine flag. A green run there would say nothing.
+  #
+  # ⚠ WHAT THIS JOB CANNOT DO, AND SAYS SO: the media half of the smoke test
+  # SKIPS here. `00-INDEX.md` Rule 3 keeps every video out of the repository,
+  # so the real-media half runs on the build machine against the corpus and is
+  # recorded in `LEDGER.md` §Delivery. This job proves the BUILD: two
+  # executables in one folder, the data collected, the licences carried, and
+  # the instrument able to report its own absence.
+  standalone:
+    name: the Windows standalone
+    needs: build
+    runs-on: windows-latest
+    # ⛔ NO EXTRA PERMISSIONS. This job builds, tests and hands the zip on as a
+    # workflow artefact; the workflow default `contents: read` is all it needs.
+    # ⚠ It carried `contents: write` while it did its own release upload —
+    # moving that to `attach` and leaving the permission behind would have been
+    # a grant nothing used, which is how a least-privilege list rots.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install the published wheel, with every extra, plus PyInstaller
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # ⚠ EXACTLY ONE WHEEL, ASSERTED. `ls dist/*.whl` with two matches
+          # puts a newline inside the pip argument; pip then fails loudly,
+          # which is survivable — but the `build` job's own
+          # `glob.glob("dist/*.whl")[0]` picks one SILENTLY, and that is the
+          # job gating this upload. Refusing here names the condition.
+          COUNT=$(ls -1 dist/*.whl | wc -l)
+          test "$COUNT" -eq 1 || {
+            echo "::error title=ambiguous wheel::$COUNT wheels in dist/; this job must freeze exactly the one being published"
+            ls -la dist/; exit 1; }
+          WHEEL=$(ls dist/*.whl)
+          echo "freezing $WHEEL"
+          python -m pip install "${WHEEL}[all]" pyinstaller
+
+      # ⛔ FROM A DIRECTORY THAT IS NOT THE CHECKOUT ROOT. Run from the repo
+      # root, PyInstaller's analysis would find `./tsubasa/` — the source tree
+      # — instead of the installed wheel, and every check below would pass
+      # against files no downloader receives. That is how 0.1.0 shipped broken.
+      - name: Freeze — one spec, two executables, one COLLECT
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _freeze && cd _freeze
+          python -m PyInstaller --noconfirm --log-level WARN \
+            --distpath app --workpath build \
+            "$GITHUB_WORKSPACE/packaging/tsubasa.spec"
+          ls -la app/tsubasa/
+
+      # ⛔ THE PACKAGER REFUSES A BUILD WHOSE OWN `--version` EXITS NON-ZERO.
+      # It used to read the version off stdout and ignore the return code, so
+      # a build with no alias table produced a correctly-named, correctly-
+      # checksummed 29 MB zip and exited 0. Only this step's ORDER kept it off
+      # a release page, which is not a guard.
+      - name: Assemble the zip and its checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/package_standalone.py _freeze/app \
+            --repo . --out _release
+          cat _release/SHA256SUMS
+
+      # =====================================================================
+      # ⭐ THE ZIP IS EXTRACTED AND DRIVEN. THE ZIP IS THE DELIVERABLE.
+      # =====================================================================
+      # ⛔ This used to test `_freeze/app/tsubasa` — the FOLDER the zip was
+      # made from — so a truncated, mis-rooted or short zip would have
+      # uploaded green. `doctrine/release`: assert the live artefact, and the
+      # artefact is the file a person downloads.
+      #
+      # ⚠ The media half SKIPS here and says so. `00-INDEX.md` Rule 3 keeps
+      # every video out of the repository, so the real-media half runs on the
+      # build machine against the corpus and is recorded in `LEDGER.md`
+      # §Delivery. This job proves the BUILD: two executables in one folder,
+      # the data collected AND able to resolve a real name, the licences
+      # carried whole, the window opening, and the instrument able to report
+      # its own absence.
+      - name: Smoke-test THE ZIP
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          # ⚠ `--version` is PASSED. Without it the agreement check inside the
+          # smoke test is silently omitted rather than skipped, and the run
+          # reports one fewer check with nothing saying which.
+          VERSION=$(python -c "import tsubasa; print(tsubasa.__version__)")
+          python packaging/smoke_standalone.py \
+            --zip _release/tsubasa-windows-x64.zip --version "$VERSION"
+
+      # ⚠ The tag and the frozen app must agree, for the same reason the
+      # `build` job checks the wheel: `10-deployment.md` rests a release proof
+      # on *the live artifact's version equals the local one*, and a zip is an
+      # artifact exactly as a wheel is.
+      # ⛔ NO PIPE. `doctrine/release` forbids one in a release block, and the
+      # previous form read the version through `head | awk` — a second parser
+      # for a line `package_standalone.py` already parses its own way.
+      - name: The frozen app must report the tag's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          _freeze/app/tsubasa/tsubasa.exe --version > _version.txt
+          APP=$(python -c "import io,sys; print(io.open('_version.txt', encoding='utf-8').readline().split()[-1])")
+          echo "tag=$TAG frozen app=$APP"
+          test "$TAG" = "$APP" || {
+            echo "::error title=version mismatch::the frozen app says $APP, the tag says $TAG"
+            exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: standalone-windows-x64
+          path: _release/
+
+  # =========================================================================
+  # ⭐ THE RELEASE PAGE IS POPULATED LAST, AND ONLY IF BOTH HALVES PASSED
+  # =========================================================================
+  #
+  # ⛔ `standalone` and `publish` used to run in PARALLEL off `build`, and only
+  # `publish` carried `environment: pypi`. So a zip could be attached to a
+  # public release for a version a reviewer never approved for PyPI, and PyPI
+  # could publish a version whose zip never landed — *one version number, one
+  # release page* was an intention, not an invariant.
+  #
+  # ⭐ Now it is a shape: nothing public exists until the wheel is on PyPI AND
+  # the frozen zip has been extracted and driven. `publish` needs `standalone`,
+  # so a broken Windows build stops the PyPI upload too — the safe direction,
+  # because an unpublished version burns nothing and a published one is
+  # forever.
+  attach:
+    name: attach the zip to the Release
+    needs: [standalone, publish]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      # ⛔ WRITE, AND ONLY ON THIS JOB. The workflow default stays
+      # `contents: read`; this is the one step that needs more. No secret is
+      # added — `github.token` is issued per run.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: standalone-windows-x64
+          path: _release/
+
+      # ⭐ `gh` RATHER THAN A THIRD-PARTY ACTION, and that is deliberate.
+      # `STANDALONE-BUILD-SCOPE.md` §4 step 5: *read the action's `action.yml`
+      # `runs.using` before pinning a version — Node 20 leaves GitHub's
+      # runners 2026-09-23, and version numbers do not tell you the runtime.*
+      # `gh` is preinstalled on the runner and has no JavaScript runtime to
+      # age out, so the trap cannot apply to it. ⚠ It DOES still apply to the
+      # four actions this workflow uses — `checkout@v5`, `setup-python@v6`,
+      # `download-artifact@v7`, `upload-artifact@v7` — and none of their
+      # `runs.using` values is recorded anywhere, which is the check §4 step 5
+      # actually asks for. Open, and named rather than implied.
+      - name: Upload, once and only once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # ⚠ The tag exists; a RELEASE is a separate object and may not.
+          # Create it only when absent, so a release written by hand keeps its
+          # notes.
+          gh release view "$TAG" > /dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --generate-notes
+
+          # =================================================================
+          # ⛔ NO `--clobber`. A PUBLISHED ARTEFACT IS IMMUTABLE.
+          # =================================================================
+          # PyInstaller builds are not reproducible, so a re-run — a flake, a
+          # cancelled job, a retry — would produce DIFFERENT bytes and quietly
+          # replace both the zip and SHA256SUMS under the same tag. Anyone
+          # holding the first download then fails `sha256sum -c` against the
+          # published file, with no way to tell which build they have.
+          # ⭐ The same property PyPI enforces for a version number, enforced
+          # here by refusing rather than by hoping.
+          gh release view "$TAG" --json assets \
+            --jq '.assets[].name' > _assets.txt || true
+          if grep -qx "tsubasa-windows-x64.zip" _assets.txt; then
+            echo "::error title=artefact already published::this tag already carries tsubasa-windows-x64.zip. A release artefact is immutable; re-running would replace bytes somebody may already have downloaded and checksummed. Delete the asset deliberately if it really must be replaced."
+            exit 1
+          fi
+          gh release upload "$TAG" \
+            _release/tsubasa-windows-x64.zip _release/SHA256SUMS
+
   publish:
     name: publish to PyPI
-    needs: build
+    needs: [build, standalone]
     runs-on: ubuntu-latest
     # ⭐ A dedicated environment, so publishing can be gated by a required
     # reviewer in repository settings if this ever has other maintainers.

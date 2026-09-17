@@ -70,6 +70,7 @@ Options
   --json             NDJSON, one object per result — the library's own shape
   --verbose          add the raw multiples, the chance level and the reference
   --no-results       ignore and do not update the record of what was synced
+  --version          this build: its version, and whether it is whole
   -h, --help         this
 """
 
@@ -503,13 +504,15 @@ def parse(argv):
         u"rename": True, u"suffix": None,
         u"keep_all": False, u"pairs": [], u"force": False,
         u"dry_run": False, u"json": False, u"verbose": False,
-        u"results": True, u"help": False,
+        u"results": True, u"help": False, u"version": False,
     }
     rest = list(argv)
     while rest:
         arg = rest.pop(0)
         if arg in (u"-h", u"--help"):
             opts[u"help"] = True
+        elif arg == u"--version":
+            opts[u"version"] = True
         elif arg == u"--subs":
             opts[u"subs"] = _value(rest, arg)
         elif arg == u"--out":
@@ -582,6 +585,66 @@ def _manifest(path):
 
 
 # ---------------------------------------------------------------------------
+# --version
+# ---------------------------------------------------------------------------
+
+def version_lines(check=None):
+    u"""What `--version` prints. -> [unicode]
+
+    🚨 IT IS NOT ONLY THE VERSION, AND THAT IS THE POINT. A standalone build
+    has no pip to reinstall and no traceback to read, and this project's two
+    silent failures both look exactly like a working install from outside:
+    `STANDALONE-BUILD-SCOPE.md` trap 8 — *a frozen build that lost its alias
+    table still runs, still exits 0, and is quietly far worse* (settled by
+    name 80.0% -> 51.4%) — and a machine with no ffmpeg, which only shows up
+    as a refusal on some other day. ⭐ So the one command a person is asked to
+    run when they report a bug answers both at once, and `self_check()` gets a
+    caller that exists on a machine with nothing else on it.
+
+    ⭐ THE FIRST LINE IS THE CONTRACT: `tsubasa <version>`, nothing else on it.
+    The release job reads it to prove the frozen app carries the same version
+    as the wheel built from that tag (`STANDALONE-BUILD-SCOPE.md` §7), and a
+    person quoting one line into an issue quotes the one that identifies the
+    build.
+
+    ⚠ EVERY LITERAL HERE IS ASCII, and that is measured rather than tidy.
+    `selfcheck.py`'s own note: a frozen Windows app's stdout is cp1252 as a
+    pipe and cp437 as a console, the PyInstaller bootloader runs Python
+    isolated so `PYTHONIOENCODING` is ignored, and an em dash killed this
+    project's third instrument in one day. The only non-ASCII that can reach
+    these lines is a PATH — evidence, reported verbatim — and `main`
+    reconfigures its streams with `errors="replace"` before anything is
+    written.
+    """
+    from .selfcheck import self_check
+
+    check = self_check() if check is None else check
+    host = u"python %s, %s" % (sys.version.split()[0], sys.platform)
+    if getattr(sys, u"frozen", False):
+        host += u", frozen"
+    # ⚠ `declared` IS None WHEN THE FILE CARRIES NO HEADER, and `%s` renders
+    # that as the literal word `None` — on the one command a stuck user is
+    # told to run, in the one state trap 8 exists to detect. `?` says the same
+    # thing without looking like a crash.
+    def counted(loaded, declared):
+        return u"%s/%s" % (loaded, u"?" if declared is None else declared)
+
+    lines = [
+        u"tsubasa %s" % check.version,
+        host,
+        u"aliases %s, vocabulary %s, ffmpeg %s"
+        % (counted(check.alias_entries, check.alias_declared),
+           counted(check.vocabulary_tokens, check.vocabulary_declared),
+           u"found" if check.ffmpeg else u"not found"),
+        u"data %s" % check.data_dir,
+    ]
+    lines.extend(u"note: %s" % note for note in check.notes)
+    lines.extend(u"PROBLEM: %s" % sentence for sentence in check.problems)
+    lines.append(u"ok" if check.ok else u"NOT ok")
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # the run
 # ---------------------------------------------------------------------------
 
@@ -593,6 +656,12 @@ def main(argv=None, out=None, err=None):
     | 0 | every pair this run decided is written, or would be |
     | 1 | something was REFUSED, ERRORED, or failed to write |
     | 2 | the command could not be run as typed |
+
+    ⭐ `--version` follows the same shape: **0 when this build is whole, 1
+    when `self_check()` found a problem.** A release gate that forgets to read
+    the output still fails, which is the second of `doctrine/release` §3's
+    *two defences, and you want both* — trap 8's whole complaint is that a
+    build which lost its data exits 0.
 
     🚨 A REFUSAL IS A NON-ZERO EXIT. It is the whole point of the tool that it
     declines to produce a confidently wrong file, and a script that pipes this
@@ -609,9 +678,21 @@ def main(argv=None, out=None, err=None):
         err.write(u"%s\n" % exc)
         return 2
 
-    if opts[u"help"] or (not opts[u"roots"] and not opts[u"pairs"]):
-        (out if opts[u"help"] else err).write(USAGE)
-        return 0 if opts[u"help"] else 2
+    if opts[u"help"]:
+        out.write(USAGE)
+        return 0
+
+    # ⚠ BEFORE the no-roots branch below, and that ordering is the feature:
+    # `--version` names no folder, so reaching the *"you gave me nothing to
+    # do"* refusal would print USAGE to stderr and exit 2 instead.
+    if opts[u"version"]:
+        lines = version_lines()
+        out.write(u"\n".join(lines) + u"\n")
+        return 0 if lines[-1] == u"ok" else 1
+
+    if not opts[u"roots"] and not opts[u"pairs"]:
+        err.write(USAGE)
+        return 2
 
     if opts[u"roots"] and opts[u"pairs"]:
         err.write(u"Give a folder to search OR explicit --pair arguments, not "

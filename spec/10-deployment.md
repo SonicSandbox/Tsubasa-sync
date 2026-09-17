@@ -79,9 +79,14 @@ JSON handling and packet parsing are **unexercised**. Named in RUNBOOK 1d as unc
 1. Look for `ffmpeg`/`ffprobe` on PATH, then `$TSUBASA_FFMPEG`, then the cache directory
 2. If absent and a run needs it (the VAD path, or a non-MKV container), that pair is
    **REFUSED with an actionable reason**
-3. ⏸ **`tsubasa setup --ffmpeg` — SPECIFIED HERE, NEVER BUILT.** It was to be the only
-   thing that reaches the network: explicit, run once, a **stock build** (any licence is
-   acceptable under GPL-3.0), **pinned sha256**, never touching system paths
+3. ⏳ **`tsubasa setup --ffmpeg` — specified here, never built, and RULED TO BUILD on
+   2026-09-17** when Sonic chose an installer over bundling ffmpeg in the standalone
+   (`STANDALONE-BUILD-SCOPE.md`, RUNBOOK **Step 3g**). The only thing that reaches the
+   network: explicit, run once, a **stock build** (any licence is acceptable under
+   GPL-3.0 — and fetching is not redistributing), **pinned sha256**, never touching
+   system paths. 🚨 **Step 3g must first close a wiring gap measured the same day: the
+   cache-directory rung of `ffmpeg.find()` is never reached**, because nothing in the
+   product passes `cache_dir` — so a downloaded binary would sit where nobody looks
 4. ⛔ The library never downloads and never prompts. It reports in `Result.reason`
 
 🚨 **AND THE REFUSAL NAMED THAT UNBUILT COMMAND UNTIL 0.1.4 (fixed 2026-09-17).** Every
@@ -104,6 +109,30 @@ ffmpeg (when bundled: its licence text and the build's source or a pointer to it
 same release).
 
 ---
+
+## Where the tool stores things — asked and answered 2026-09-17
+
+| | |
+| --- | --- |
+| **Windows** | `%LOCALAPPDATA%\tsubasa` |
+| **Linux / macOS** | `~/.cache/tsubasa` |
+| **Override** | `TSUBASA_CACHE`, and `sync(trash_root=)` for the trash alone |
+| **What is in it** | the pairing cache · the results store · the GUI's settings file · the fallback `.tsubasa-trash/` |
+
+⛔ **Not `%APPDATA%\Roaming\<Company>\<Product>`, and the distinction is deliberate.**
+Windows splits the two: **Roaming** carries small settings and credentials that should
+follow a user to another machine; **Local** carries caches, derived data and anything
+machine-specific. Everything tsubasa writes is regenerable or machine-specific — nobody
+wants a subtitle cache or a trash folder syncing between PCs. ⭐ And a vendor folder names
+an application: `SonicSandbox\Surasura` is right for surasura, which stores credentials and
+usage counts; **tsubasa is a published library other people's apps import**, so it uses its
+own name. An application that wants tsubasa's files inside its own folder sets
+`TSUBASA_CACHE` at startup — no code change.
+
+⚠ **Two consequences, named rather than fixed:** the GUI's settings file lives in the CACHE
+directory, so clearing the cache discards preferences (⭐ lean: leave it — one location is
+easier to explain); and the fallback trash lives there too, so "clear the cache" also
+discards recoverable subtitles.
 
 ## Version stamping
 

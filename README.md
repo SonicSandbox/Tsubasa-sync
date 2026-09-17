@@ -253,6 +253,41 @@ tsubasa-gui
 Drag a folder onto the window and it runs. Refusals and errors pin to the top;
 click one to read the full reason. Every option lives behind one button.
 
+### Windows, without installing Python
+
+`tsubasa-windows-x64.zip` on the [releases
+page](https://github.com/SonicSandbox/Tsubasa-sync/releases) is the whole app
+with Python inside it. Unzip it anywhere and double-click **`tsubasa-gui.exe`**;
+`tsubasa.exe` beside it is the same command line described above. `SHA256SUMS`
+on the same page is the checksum.
+
+> ⚠ **It is not code-signed, so the first launch is noisy.** Windows
+> SmartScreen shows *"Windows protected your PC"* — click **More info**, then
+> **Run anyway**. Defender may also quarantine a freshly-downloaded copy. The
+> zip carries no installer and writes nothing outside `%LOCALAPPDATA%\tsubasa`
+> and the subtitles it syncs.
+
+**ffmpeg is not bundled.** Matroska files with a subtitle track inside need
+nothing; any other container needs `ffmpeg` and `ffprobe` on `PATH`, or the
+folder holding them in `TSUBASA_FFMPEG`.
+
+**`tsubasa.exe --version`** reports the build, whether its data tables are
+intact and whether ffmpeg was found — it is the one thing worth pasting into a
+bug report.
+
+> Windows only for now. On Linux you already have Python, which is the only
+> thing freezing removes — so install it instead, **with the extras**, since
+> that is what the zip actually carries:
+>
+> ```bash
+> pipx install "tsubasa-sync[parsing,trash,gui]"
+> ```
+>
+> ⚠ A bare `pipx install tsubasa-sync` pulls numpy alone: worse filename
+> parsing, no OS trash, no drag-and-drop. ⚠ And the GUI needs your distro's Tk
+> package (`sudo apt install python3-tk`, `sudo dnf install python3-tkinter`) —
+> that one is genuinely the thing a frozen build would have fixed.
+
 ---
 
 ## What it can't do yet

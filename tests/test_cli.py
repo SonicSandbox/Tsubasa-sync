@@ -755,3 +755,278 @@ def test_verbose_puts_the_raw_multiple_on_its_OWN_line():
     assert u"4.33× chance" in loud
     for line in loud.splitlines():
         assert CLI._width(line) <= 100, (CLI._width(line), line)
+
+
+# ---------------------------------------------------------------------------
+# 🚨 `--version` — RUNBOOK 4c trap 12. The one command a standalone user runs
+# ---------------------------------------------------------------------------
+#
+# `STANDALONE-BUILD-SCOPE.md` trap 12: *the user cannot ask what version they
+# have, so the first bug report is unanswerable.* And trap 8, which is why it
+# prints more than a number: **a frozen build that lost its alias table still
+# runs, still exits 0, and is quietly far worse** — settled by name 80.0% →
+# 51.4%, with nothing raising anywhere. A person holding a zip has no pip to
+# reinstall and no traceback to read.
+#
+# ⛔ These drive `main()`, not `version_lines()` alone, because the ORDERING
+# inside `main` is half the feature: `--version` names no folder, so a branch
+# placed after the *"you gave me nothing to do"* refusal prints USAGE to
+# stderr and exits 2.
+
+def _truncate_the_alias_table(monkeypatch):
+    u"""Make `self_check()` see 10 of the entries the header declares.
+
+    ⚠ THE REAL `Table` TYPE, not a stand-in. `LEDGER-HOT.md`: *a fake that
+    disagrees with the real thing about a type measures the fake* — and
+    `self_check()` reads `len()`, `.meta` and the private key map.
+    """
+    from tsubasa.naming import alias as ALIAS
+    real = ALIAS.load()
+    monkeypatch.setattr(ALIAS, "_CACHED",
+                        ALIAS.Table(dict(list(real._keys.items())[:10]),
+                                    real._names, dict(real.meta)))
+
+
+def _truncate_the_vocabulary(monkeypatch):
+    u"""The same, for the decoration vocabulary. ⚠ It needed its own: the
+    alias pair was guarded and its twin was not, and four mutants printing the
+    wrong vocabulary numbers survived every check."""
+    from tsubasa.naming import decoration as DECO
+    real = DECO.load()
+    monkeypatch.setattr(DECO, "_CACHED",
+                        DECO.Vocabulary(set(sorted(real.tokens)[:3]),
+                                        dict(real.meta)))
+
+
+def test_version_first_line_is_the_contract_and_carries_nothing_else(out, err):
+    u"""⭐ `tsubasa <version>`, two tokens, nothing else on the line. The
+    release job reads it to prove the frozen app was built from the same tag
+    as the wheel (`STANDALONE-BUILD-SCOPE.md` §7), and it is the line a person
+    quotes into an issue."""
+    import tsubasa
+
+    assert CLI.main([u"--version"], out=out, err=err) == 0
+    first = out.text.splitlines()[0]
+    # 🚨 AN EXACT COMPARE, NOT `.split()`. `str.split()` collapses runs and
+    # strips the ends, so two spaces, a TAB between the tokens and a trailing
+    # space all survived it — and a release job doing `line.split(" ")[1]` or
+    # an equality compare breaks on every one of the three.
+    assert first == u"tsubasa %s" % tsubasa.__version__, repr(first)
+
+
+def test_version_needs_no_folder_and_never_prints_USAGE(out, err):
+    u"""🚨 THE ORDERING IS THE FEATURE. Placed below the no-roots branch,
+    `tsubasa --version` answers with the whole help text on stderr and exit 2
+    — a correct-looking implementation that is useless for its one job."""
+    code = CLI.main([u"--version"], out=out, err=err)
+    assert code == 0, u"stderr was: %r" % err.text
+    assert u"pair subtitles to videos" not in out.text + err.text, out.text
+    assert err.text == u"", err.text
+
+
+def test_version_is_offered_in_the_help_text():
+    u"""⚠ A flag nobody is told about is a flag nobody runs, and `--help` is
+    where a person holding a zip looks."""
+    assert u"--version" in CLI.USAGE
+
+
+def test_version_REPORTS_A_BUILD_THAT_LOST_ITS_DATA_and_exits_nonzero(
+        out, err, monkeypatch):
+    u"""🚨 TRAP 8, AND IT IS WHY THIS COMMAND EXISTS AT ALL.
+
+    A truncated alias table costs 28.6 points of pairing quality and raises
+    nothing — `selfcheck.py`'s whole note. ⭐ Both defences are asserted,
+    because `doctrine/release` §3 wants both: the OUTPUT names the problem,
+    **and** the exit code is non-zero, so a release gate that forgets to read
+    the output still fails.
+    """
+    _truncate_the_alias_table(monkeypatch)
+    code = CLI.main([u"--version"], out=out, err=err)
+    lines = out.text.splitlines()
+    assert code == 1, out.text
+    assert lines[-1] == u"NOT ok", lines
+    assert any(line.startswith(u"PROBLEM:") for line in lines), lines
+    assert any(u"truncated" in line for line in lines), lines
+
+
+def test_version_says_FROZEN_only_when_it_is(out, err, monkeypatch):
+    u"""⭐ The standalone's own line, and the branch `STANDALONE-BUILD-SCOPE.md`
+    trap 1 says has never run. A bug report from a zip and one from a `pip
+    install` are different bugs, and nothing else on screen tells them apart."""
+    assert CLI.main([u"--version"], out=out, err=err) == 0
+    # ⚠ ON THE HOST LINE, not the whole output. A substring search over
+    # everything reads `_FROZEN_HINT` — *"If this application is frozen…"* —
+    # and any note a raising `find_spec` produces, so a genuinely unfrozen
+    # broken build would have failed it.
+    assert not out.text.splitlines()[1].endswith(u", frozen"), out.text
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    loud = Stream()
+    assert CLI.main([u"--version"], out=loud, err=err) == 0
+    host = loud.text.splitlines()[1]
+    assert host.endswith(u", frozen"), host
+
+
+def test_every_word_version_prints_is_ASCII_even_when_the_build_is_BROKEN(
+        monkeypatch):
+    u"""🚨 MEASURED, NOT TIDY — and it is this project's worst bug class.
+
+    `selfcheck.py`: a frozen Windows app's stdout is cp1252 as a pipe and
+    **cp437 as a console**, and the PyInstaller bootloader runs Python
+    isolated so `PYTHONIOENCODING` is ignored. An em dash in a diagnostic
+    killed a frozen app on the line reporting the very fault it existed to
+    report. ⚠ cp1252 is NOT the bar — it carries an em dash and a `·`; ASCII
+    is.
+
+    ⭐ The one thing that may be non-ASCII is a PATH, evidence and reported
+    verbatim, so every path is removed and every other literal must be ASCII.
+
+    🚨 AND *EVERY* PATH IS THREE PATHS, NOT ONE. The first version of this
+    check removed `check.data_dir` alone — but `_compare`'s sentences embed
+    the DATA FILE's path (`alias._GZIP`, `decoration._DATA`), and both are
+    derived from `__file__`. ⛔ Measured by an adversarial pass: copied to
+    a folder named `さとし`, a CORRECT build failed this check with
+    `'ascii' codec can't encode characters in position 184-186` — a position
+    inside `_GZIP`. **The check written to protect Japanese users failed for
+    Japanese users**, and only because the fixture happened to overwrite the
+    one path it knew how to remove.
+
+    ⚠ AND ALL THREE OF `_compare`'S BRANCHES ARE DRIVEN, not just the
+    truncated one. The other two — *did not load* and *no header* — are the
+    ones that carry `_FROZEN_HINT`, and they print **only** on a frozen build
+    that collected no data files, which is the one environment where a cp437
+    stdout exists. An em dash there was measured to lose the entire
+    diagnostic, not one line of it.
+    """
+    from tsubasa import selfcheck as SC
+    from tsubasa.naming import alias as ALIAS
+    from tsubasa.naming import decoration as DECO
+
+    real = ALIAS.load()
+    states = {
+        u"truncated": (ALIAS.Table(dict(list(real._keys.items())[:10]),
+                                   real._names, dict(real.meta)),
+                       DECO.load()),
+        u"absent": (ALIAS.Table(), DECO.Vocabulary()),
+        u"no header": (ALIAS.Table(real._keys, real._names,
+                                   dict((k, v) for k, v in real.meta.items()
+                                        if k != u"keys")),
+                       DECO.load()),
+    }
+    # ⭐ Every path the output can carry, from the modules that own them —
+    # never a hand-written list, which is what drifts.
+    paths = [ALIAS._GZIP, ALIAS._DATA_DIR, DECO._DATA,
+             u"C:\\Users\\さとし\\Desktop\\つばさ\\data"]
+
+    for name, (table, vocab) in states.items():
+        monkeypatch.setattr(ALIAS, "_CACHED", table)
+        monkeypatch.setattr(DECO, "_CACHED", vocab)
+        check = SC.self_check()
+        check.data_dir = paths[-1]
+        lines = CLI.version_lines(check=check)
+        assert any(line.startswith(u"PROBLEM:") for line in lines), \
+            u"%s did not produce a PROBLEM: %r" % (name, lines)
+        for line in lines:
+            rest = line
+            for path in paths:
+                rest = rest.replace(path, u"")
+            try:
+                rest.encode("ascii")
+            except UnicodeEncodeError as exc:
+                raise AssertionError(
+                    u"the %s state printed a non-ASCII literal, which a "
+                    u"frozen Windows console (cp437) cannot render: %r "
+                    u"(%s)" % (name, line, exc))
+
+
+def test_version_reads_ffmpeg_and_the_table_off_the_real_SelfCheck(monkeypatch):
+    u"""⚠ Read off `SelfCheck`, never recomputed — `05-interface.md`'s rule one
+    process boundary out. ⭐ And ffmpeg is asserted in BOTH directions: a
+    standalone user's machine routinely has none, and *"ffmpeg found"* on a
+    machine without it sends a bug report the wrong way."""
+    from tsubasa import selfcheck as SC
+    from tsubasa.container import ffmpeg as FF
+
+    # 🚨 THE FAKE HONOURS `tool`, AND THE FIRST VERSION DID NOT. Ignoring it
+    # made `check.ffmpeg` and `check.ffprobe` indistinguishable, so a mutant
+    # reading the WRONG one survived all seven checks — and on a machine with
+    # ffmpeg but no ffprobe (exactly what `set_ffmpeg()` and `$TSUBASA_FFMPEG`
+    # exist for) it prints *"ffmpeg not found"* with ffmpeg sitting right
+    # there. `LEDGER-HOT.md`: a fake that disagrees with the real thing about
+    # anything measures the fake.
+    def only(*present):
+        return lambda tool=u"ffprobe", cache_dir=None: (
+            u"/opt/%s" % tool if tool in present else None)
+
+    monkeypatch.setattr(FF, "find", only(u"ffmpeg", u"ffprobe"))
+    found = CLI.version_lines(check=SC.self_check())
+    monkeypatch.setattr(FF, "find", only())
+    absent = CLI.version_lines(check=SC.self_check())
+    monkeypatch.setattr(FF, "find", only(u"ffmpeg"))
+    half = CLI.version_lines(check=SC.self_check())
+
+    assert u"ffmpeg found" in found[2], found
+    assert u"ffmpeg not found" in absent[2], absent
+    assert u"ffmpeg found" in half[2], (
+        u"ffmpeg is here and ffprobe is not; this line is about FFMPEG: %r"
+        % half[2])
+
+    real = SC.self_check()
+    assert u"aliases %s/%s" % (real.alias_entries,
+                               real.alias_declared) in found[2], found
+    assert u"vocabulary %s/%s" % (real.vocabulary_tokens,
+                                  real.vocabulary_declared) in found[2], found
+    assert found[-1] == u"ok" and absent[-1] == u"ok", (found, absent)
+
+    # ⭐ A NOTE REACHES THE SCREEN, and nothing asserted that: deleting the
+    # notes line outright survived every check. ⚠ The state is FORCED rather
+    # than relied on — on a machine with ffprobe and every optional import,
+    # `notes` is empty, so the old coverage was an accident of this box.
+    assert any(l.startswith(u"note: ") and u"ffprobe" in l for l in absent), \
+        u"the ffprobe note never reached the screen: %r" % absent
+
+    # 🚨 A WHOLE BUILD HOLDS `loaded` AND `declared` EQUAL, so everything above
+    # is blind to a line that prints one of them twice — `LEDGER-HOT.md`'s
+    # *list what your fixtures hold constant; that list is the defect
+    # surface*. ⚠ BOTH tables, because for a while only the alias pair was
+    # guarded and four mutants on the vocabulary pair survived.
+    # ⚠ The declared counts are DERIVED, never pinned: both tables are
+    # regenerated and grow, and a literal fails on every refresh.
+    monkeypatch.setattr(FF, "find", only(u"ffmpeg", u"ffprobe"))
+    _truncate_the_alias_table(monkeypatch)
+    _truncate_the_vocabulary(monkeypatch)
+    broken = CLI.version_lines(check=SC.self_check())
+    assert u"aliases 10/%s" % real.alias_declared in broken[2], broken
+    assert u"vocabulary 3/%s" % real.vocabulary_declared in broken[2], broken
+
+
+def test_version_never_prints_the_word_None_at_a_user(monkeypatch):
+    u"""⚠ A table whose header does not declare a size gives `declared is
+    None`, and `%s` renders that as the literal `None` — *"aliases 0/None"* —
+    on the one command a stuck user is told to run, in the one state trap 8
+    exists to detect. It reads like a crash and it is not one."""
+    from tsubasa import selfcheck as SC
+    from tsubasa.naming import alias as ALIAS
+
+    real = ALIAS.load()
+    monkeypatch.setattr(ALIAS, "_CACHED", ALIAS.Table(
+        real._keys, real._names,
+        dict((k, v) for k, v in real.meta.items() if k != u"keys")))
+    lines = CLI.version_lines(check=SC.self_check())
+    assert u"None" not in u"\n".join(lines), lines
+    assert u"/?" in lines[2], lines[2]
+
+
+def test_version_reports_the_build_it_was_HANDED_not_the_one_it_imports():
+    u"""⚠ `version_lines(check=X)` could ignore `X.version` and read the module
+    global instead — and nothing would notice, because on any real run the two
+    agree. Two mutants survived on exactly that.
+
+    ⭐ It matters the moment a caller inspects another installation's
+    `SelfCheck`, which is what the parameter is for.
+    """
+    from tsubasa import selfcheck as SC
+
+    check = SC.self_check()
+    check.version = u"9.9.9-elsewhere"
+    assert CLI.version_lines(check=check)[0] == u"tsubasa 9.9.9-elsewhere"

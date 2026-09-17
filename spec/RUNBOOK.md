@@ -60,6 +60,12 @@ LAYER 3 — needs A + B
 LAYER 4
   ├── 4a  ✅ Release — PyPI `tsubasa-sync`, a `v*` tag through Trusted Publishing.
   │           0.1.0 (yanked) · 0.1.1 · 0.1.2 · 0.1.3. Frozen binaries were NOT built
+  ├── 3g  ⏳ `tsubasa setup --ffmpeg` — the installer, ruled INSTEAD of bundling
+  │           ffmpeg in the standalone (Sonic, 2026-09-17)
+  ├── 4c  ⏳ STANDALONE — a WINDOWS zip with no Python in it, GUI first, unsigned,
+  │           on the same `v*` tag as PyPI (Sonic, 2026-09-17).
+  │           Scope: `STANDALONE-BUILD-SCOPE.md`. Linux = a wrapper, spec'd not
+  │           built (§8a); macOS = ⏸ HALTED with its flow recorded (§8b)
   └── 4b  ⏸ Rust — unjustified: the primitive runs at 49 ms/pair in numpy
 ```
 
@@ -1337,6 +1343,135 @@ The steps for a given version: `RELEASE-0.1.2-NEXT.md`. ffmpeg is found on PATH 
 `tsubasa setup --ffmpeg` downloader was never built, and the refusal stopped naming it at
 0.1.4. It is needed only for audio (VAD) and for containers the native reader cannot read. ⚠ **Read `doctrine/release` first. Pipe nothing
 inside the block.**
+
+## Step 3g — ⏳ `tsubasa setup --ffmpeg` — the installer, ruled 2026-09-17
+
+**surfaces:** `delivery` `logic` `harness` · **authority:** `10-deployment.md`
+§*Acquiring ffmpeg* (the design is already written there) · **depends on:** nothing
+
+⛔ **Sonic ruled it, asked for the standalone:** *"No to bundle ffmpeg, just have an
+installer for it if you can."* So the zip stays ~40–90 MB and a user who needs
+ffmpeg — an MP4, or the VAD path later — runs one command once. ⭐ **Downloading is
+not redistributing:** we take on none of ffmpeg's licence obligations by fetching a
+stock build, which bundling would have brought with it.
+
+| | |
+| --- | --- |
+| **Build** | `tsubasa setup --ffmpeg` in `cli.py`: fetch a pinned build for this platform, verify a **pinned sha256**, extract ONLY `ffmpeg` and `ffprobe` into the cache directory, `chmod +x` on POSIX. Idempotent: already installed and matching the hash → say so, exit 0 |
+| 🚨 **The wiring gap it must close FIRST** | **`find()`'s cache rung is dead today.** It looks in `<cache>/`, `<cache>/ffmpeg/` and `<cache>/bin/` — but only when a caller passes `cache_dir`, and **nothing in the product does**: `pipeline._default_reader` and `embedded_subs` both call `container.read(path, …)` without one (measured 2026-09-17). Installing into the cache directory would therefore change nothing. `find()` must default `cache_dir` to `paths.cache_root()`, with a check that the rung is reachable from a real `sync()` |
+| ⛔ **Never during a run** | `10-deployment.md` rule. A tool that downloads a binary mid-run behaves differently on its second use than its first. The library never downloads and never prompts |
+| 🚨 **Verify before it becomes findable** | Download to a temp file, hash it, and only then move it into place. A half-written `ffmpeg.exe` in the cache directory is a file `find()` will hand to `subprocess` — the resolver cannot tell a partial download from a tool |
+| ⚠ **A pinned URL rots** | Vendors rotate "latest" links; pin a VERSIONED release URL and its hash, per platform (Windows zip, macOS zip, Linux tar.xz). When it 404s, fail with the same sentence the refusal uses — *put ffmpeg on PATH, or set `TSUBASA_FFMPEG`* — never with a traceback |
+| ⚠ **The suite makes no network calls** | Stub the fetch; assert the hash check REFUSES a corrupted download (flip a byte) and that a refusal leaves nothing behind. One opt-in live check, excluded from the default run — hato's `07-test-plan.md` has the shape |
+| **Then** | Put the command back in the refusal sentence (`container/ffmpeg.py::missing_reason`) — it named this command until 0.1.4, when it was removed **because the command did not exist** (`LEDGER.md` §Interface). `test_ffmpeg_absence_refuses_with_a_sentence_the_user_can_act_on` checks every backticked `tsubasa <command>` against `cli.USAGE`, so it will pass the moment the command is real |
+| **Prove** | `tsubasa setup --ffmpeg` on a machine with no ffmpeg → an MP4 that was refused now syncs, in the same shell, with nothing else changed |
+
+## Step 4c — ✅ The standalone app — a Windows zip with no Python in it — BUILT 2026-09-17
+
+**surfaces:** `delivery` `ui` · **depends on:** 4a · **authority:**
+`10-deployment.md` §*Freezing*, and ⭐ **`STANDALONE-BUILD-SCOPE.md`, which is the
+whole step** — written to be read by an agent with no other context.
+
+⛔ **Ruled by Sonic 2026-09-17: WINDOWS ONLY for now, NO code signing, and the zip
+rides the SAME `v*` tag as the PyPI release.** The barrier this removes is Python
+itself — measured, the pip install pulls numpy automatically and costs 75 MB, so the
+dependency was never the problem. ⛔ **ffmpeg is not bundled**; Step 3g installs it.
+
+⚠ **The other two platforms are written down, not queued** (`STANDALONE-BUILD-SCOPE.md`
+§8): **Linux is a wrapper** — a venv plus a `.desktop` file, because a Linux user
+already has Python, and the one thing freezing would fix is the separate `python3-tk`
+package. **macOS is ⏸ HALTED**: unsigned, a downloaded app is blocked by Gatekeeper and
+CI cannot reproduce that, so it would ship having been opened by nobody. Its full flow
+is recorded for whoever resumes it.
+
+⭐ **Most of it already exists:** the PyInstaller hook ships inside the package
+(`tsubasa/__pyinstaller/`), CI's `frozen` job proves a frozen build keeps its data
+on ubuntu, and `gui/run.py::cli_argv()` already has a frozen branch. 🚨 **That
+branch has never run, and it decides the build:** a frozen GUI looks for
+`tsubasa.exe` BESIDE itself, so both executables must land in one folder.
+
+### ✅ BUILT 2026-09-17 — what landed, and the numbers
+
+| | |
+| --- | --- |
+| **The zip** | **29.0 MB** — well under `10-deployment.md`'s 40–90 MB estimate. `--onedir`, `tsubasa.exe` (console) + `tsubasa-gui.exe` (windowed) + `_internal/` + `LICENSE` + `THIRD_PARTY_LICENSES.md` + `README-FIRST.txt` |
+| **Cold start** | **0.30–0.32 s** to a printed `--help`, measured in the smoke test rather than estimated |
+| **`self_check()` inside the frozen app** | `ok`, **aliases 221258/221258, vocabulary 176/176** — the shipped hook needed no `--add-data` |
+| **The tooling, all clone-only** | `packaging/tsubasa.spec` (two `Analysis`, one `COLLECT`) · `entry_cli.py` · `entry_gui.py` · `package_standalone.py` (zip + `SHA256SUMS` + the licences) · `smoke_standalone.py` (drives the artefact) · `_work/release/build_standalone.sh` (the local driver) |
+| **CI** | a `standalone` job in `release.yml`, `needs: build`, **freezing the very wheel the `build` job made** — which is what makes *one version number* true rather than merely intended. `gh release upload`, not a third-party action, so §4 step 5's Node-20 runtime trap does not apply at all. `contents: write` scoped to that job alone |
+
+⭐ **TRAP 1 IS CLOSED, WITH THE WINDOW'S OWN EVIDENCE.** The frozen GUI was
+launched against a disposable library with `TSUBASA_CACHE` redirected, **Sync was
+pressed by mouse**, and it wrote `[SubsPlease] Yomi no Tsugai - 18 (1080p)
+[DD1CA4BC].ja.cc.srt` — `✓ 1 synced`, `CONFIDENT`, `-0.32s`, `93% match · locked`,
+Japanese rendering clean in the rows. ⚠ **And a control run**, same launch without
+the click, wrote nothing — so the button is what did it.
+
+### 🚨 A CLAIM THIS STEP MADE AND MEASUREMENT DISPROVED — `MERGE` does nothing
+
+⛔ **This section first said the 29 MB was `MERGE`'s doing. It is not.** An
+adversary rebuilt the identical spec with only the `MERGE(...)` call removed:
+**30,369,361 bytes vs 30,368,860, 1262 files either way.** The dedup is done by
+the **single `COLLECT`**, which keys on `dest_name`; `MERGE` contributes nothing
+here, because it processes only `analysis.binaries` and `analysis.datas` —
+`analysis.pure` is untouched, and the `DEPENDENCY` entries it produces land in
+`analysis.dependencies`, which this spec never passes to either `EXE`.
+
+⚠ **So the thing it was credited with is still happening:** both PYZ archives
+carry the same 572 shared modules (numpy 141, guessit 74, rebulk 36, babelfish
+15), ~3.6 MB duplicated on disk — which the zip's compression largely absorbs.
+⛔ **And wiring `dependencies` up the documented way would make each executable
+gain onefile semantics**, unpacking on every launch, which `10-deployment.md`
+ruled against. The call was removed rather than fixed.
+
+⭐ The general lesson: **a number being good is not evidence that the thing you
+credit for it did anything.** The control was one rebuild.
+
+### 🚨 Four things the build found, and two were defects in checks written this session
+
+1. ⭐ **A check that could not fail, caught by its own control.** A cross-script
+   pair (`Yomi no Tsugai` / `黄泉のツガイ`) was about to become the CI-runnable
+   proof that the alias table shipped — **and it still paired with the table
+   deleted from the bundle**, because candidates are indexed on (season,
+   episode) and the note about a waiting subtitle says nothing about names.
+   ⭐ Replaced with the one that does work: **take the table away from the built
+   bundle and require `--version` to say `NOT ok` and exit 1.**
+2. 🚨 **`kept = before - after` is a set difference over NAMES**, so a smoke
+   check written to prove an unpaired episode was not written over could never
+   have seen it retimed in place — same byte count, same name. Now asserted by
+   content hash. `LEDGER-HOT.md` trap 0d, found in this session's own work.
+3. ⚠ **A whole build holds `loaded` and `declared` equal**, so the `--version`
+   counts check was blind to a line printing one of them twice. The broken
+   build is the only state where they differ, and the check now drives it.
+4. ⚠ **`GetWindowRect` and a screen capture disagreed** because the driving
+   script was DPI-unaware while the app calls `make_process_dpi_aware`: it
+   answered `40,40 1071x694` for a window really at `100,100 2678x1735`. A
+   confident number about the wrong thing, and a click would have landed
+   somewhere else entirely.
+
+### 🚨 THE ADVERSARIAL PASS — three agents, 40 findings, THREE HIGH
+
+Split by surface (`--version` · the frozen build and trap 1 · packaging and
+release), against **~30 green checks and 19 killed mutants**. ⭐ **Every one of
+the three HIGHs was invisible from inside the work**, and two were in the
+product rather than in the checks:
+
+| | Finding |
+| --- | --- |
+| **HIGH** | 🚨 **The Sync button was a SILENT NO-OP and then wedged the app for ever.** With `tsubasa.exe` gone, `Popen` raised out of an unguarded `start()`, `self.runner` had already been assigned so `running` stayed True permanently, and `console=False` means `sys.stderr` is None so Tk printed the traceback nowhere. **Putting the file back did not help** — only killing the app did. Every check had driven trap 1 POSITIVELY |
+| **HIGH** | 🚨 **The packager shipped a build its own instrument had just failed.** It read the version off `--version`'s stdout and ignored the return code: a bundle with no alias table produced a correctly-named, correctly-checksummed 29 MB zip and exit 0. Only the workflow's step ORDER kept it off a release page |
+| **HIGH** | 🚨 **The ASCII check went RED for a correct build under a Japanese path** — the check written to protect Japanese users. The `PROBLEM:` sentences embed the DATA FILE's path, not just the data directory, and only the latter was stripped |
+| **MEDIUM** | **A count is not a table**: every key reversed — count and header untouched — and all 18 smoke checks stayed green over a table where nothing resolves. ⛔ **The second unfalsifiable data check in one day**; see below |
+| **MEDIUM** | **The zip was never opened.** Everything drove the output FOLDER, and `tsubasa-gui.exe` was never executed at all |
+| **MEDIUM** | `MERGE` does nothing (below) · a truncated GPL passed the licence check · `THIRD_PARTY_LICENSES` had the needle `u""` · a released artefact was mutable under `--clobber` · the release DAG let PyPI and the zip diverge · the smoke test **crashed on the exact defect it exists to detect** |
+
+⭐ **All fixed, each with a check that would have caught it, and the gaps are
+now 37 permanent mutants — `37/37 killed`, restored byte-identical.**
+
+⛔ **Not done, and it is the acceptance test:** §4 step 4 — **a Windows machine or
+account with NO Python**. Everything mechanical is closed; that one needs a
+person, and it is the only test that can fail for the reason the deliverable
+exists.
 
 ## Step 4b — Rust ⏸
 
