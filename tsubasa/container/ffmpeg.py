@@ -8,8 +8,10 @@ RUNBOOK step 1d. `10-deployment.md` fixes both halves of this:
     ⛔ **Never during a run.** A tool that downloads a binary mid-run is a tool
     that behaves differently on its second use than its first.
   * When it is absent and a pair needs it, that pair is **REFUSED with an
-    actionable reason** -- naming `tsubasa setup --ffmpeg` -- rather than
+    actionable reason** -- naming PATH and `$TSUBASA_FFMPEG` -- rather than
     failing with a stack trace or, worse, quietly producing nothing.
+    ⚠ It named `tsubasa setup --ffmpeg` until 0.1.4. That command is
+    `10-deployment.md`'s plan and was never built; see `missing_reason`.
 
 ⭐ WHEN THIS RUNS AT ALL
 
@@ -134,7 +136,9 @@ def find(tool="ffprobe", cache_dir=None):
     """Locate `ffmpeg` or `ffprobe`. -> a path, or None.
 
     Order: ⭐ an explicit `set_location`, then PATH, then `$TSUBASA_FFMPEG`,
-    then the cache directory that `tsubasa setup --ffmpeg` writes into.
+    then the cache directory (which nothing writes into yet -- the downloader
+    `10-deployment.md` describes was never built; the rung is kept because an
+    application may put one there).
     `10-deployment.md` fixes the last three; the first is ahead of them
     because an application that told us where its ffmpeg is has answered the
     question this function exists to ask.
@@ -175,9 +179,16 @@ def missing_reason(need=u"reading this container"):
     "a failure message says what it FOUND, not what it wanted"
     (`doctrine/robustness`), and an unactionable refusal is a round trip.
     """
+    # 🚨 THIS SENTENCE NAMED A COMMAND THAT DOES NOT EXIST, in every release up
+    # to 0.1.3: `tsubasa setup --ffmpeg` is `10-deployment.md`'s acquisition
+    # plan and was never built, so the one refusal a user is meant to ACT on
+    # told them to run something that answers "unknown option". An actionable
+    # reason that cannot be acted on is worse than a bare one -- it spends the
+    # reader's time before it fails. It now names only what exists.
     return (u"%s needs ffmpeg, which was not found on PATH, in $TSUBASA_FFMPEG "
-            u"or in the tsubasa cache directory. Run `tsubasa setup --ffmpeg` "
-            u"to fetch it, or put ffmpeg and ffprobe on PATH." % need)
+            u"or in the tsubasa cache directory. Install ffmpeg (the download "
+            u"must carry both ffmpeg and ffprobe), then either put it on PATH "
+            u"or set TSUBASA_FFMPEG to the folder holding them." % need)
 
 
 def _run(argv, timeout):

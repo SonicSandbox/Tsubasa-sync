@@ -23,7 +23,9 @@ free.
     4  ffmpeg absent and needed           REFUSED, actionably
 
 Rung 4 is a real outcome, not an error state. `10-deployment.md` requires the
-pair to be refused with a sentence naming `tsubasa setup --ffmpeg`.
+pair to be refused with a sentence the user can act on: PATH or
+`$TSUBASA_FFMPEG`. ⚠ It named `tsubasa setup --ffmpeg` until 0.1.4 -- a
+command that was never built.
 
 ## Fail open, fail closed -- decided at each site, as the doctrine requires
 

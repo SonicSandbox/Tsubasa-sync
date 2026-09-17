@@ -176,7 +176,7 @@ dropped, counted and reported — a whitelist addition (`03-permissions.md`).
 | **Wikidata** | CC0 | the shippable alias source |
 | **anitopy · guessit** | permissive | **lazy second and third opinions**, never the first pass |
 | `send2trash` | MIT | OS-native trash |
-| **ffmpeg as a SUBPROCESS** | GPL build acceptable under GPL-3.0 | audio decode for VAD; container fallback; acquired by `tsubasa setup --ffmpeg` (pinned sha256) or found on PATH — **never during a sync run** |
+| **ffmpeg as a SUBPROCESS** | GPL build acceptable under GPL-3.0 | audio decode for VAD; container fallback; found on PATH or `$TSUBASA_FFMPEG` — **never during a sync run**. ⏸ `tsubasa setup --ffmpeg` (pinned sha256) is specified in `10-deployment.md` and was never built |
 | Native MKV reader | ours | the fast path (`D2`) |
 
 ⛔ AniDB (CC BY-NC-SA), AniList and TMDB data never ship. `titles.jsonl` is the local

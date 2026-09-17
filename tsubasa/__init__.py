@@ -34,7 +34,7 @@ four shapes through them -- the parser, discovery, the sidecar reader and
 #: published artifact reporting that cannot be told apart from any other
 #: build of it (`10-deployment.md`: *the live artifact's version equals the
 #: local one*).
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 # ⚠ The submodule imports are here rather than at the bottom, and that is safe
 # because no submodule imports a name FROM this package. Every one of them

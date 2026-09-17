@@ -38,6 +38,7 @@ is not a pass, and the message says exactly what would turn them on.
 """
 import io
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -920,8 +921,24 @@ def test_ffmpeg_absence_refuses_with_a_sentence_the_user_can_act_on(tmp_path,
     p.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 256)
     info = container.read(p)
     assert info.outcome == Outcome.ERROR
-    assert "tsubasa setup --ffmpeg" in info.reason, info.reason
     assert "ffmpeg" in info.reason
+    # What the user can actually DO, and both ways of doing it.
+    assert "PATH" in info.reason and "TSUBASA_FFMPEG" in info.reason, info.reason
+    # 🚨 AND IT MAY NAME NO COMMAND THIS TOOL DOES NOT HAVE. Every release to
+    # 0.1.3 told the reader to run `tsubasa setup --ffmpeg`, which was the
+    # deployment spec's plan and was never built: the one sentence written to
+    # be acted on could not be. Asserted against the CLI's own usage text, so
+    # a subcommand invented in a message fails here rather than in a user's
+    # terminal.
+    # ⚠ Backticked forms only: the broken sentence said "Run `tsubasa setup
+    # --ffmpeg`", while prose like "the tsubasa cache directory" names nothing.
+    from tsubasa import cli
+    named = re.findall(r"`tsubasa ([a-z-]+)", info.reason)
+    for word in named:
+        assert ("tsubasa %s" % word) in cli.USAGE, (
+            "the refusal names `tsubasa %s`, which the CLI does not offer:\n%s"
+            % (word, info.reason))
+    assert "setup --ffmpeg" not in info.reason, info.reason
 
 
 def test_a_non_matroska_file_routes_to_ffmpeg(tmp_path, monkeypatch):

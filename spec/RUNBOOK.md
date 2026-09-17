@@ -1333,9 +1333,9 @@ installed copy); 0.1.1 and 0.1.2 followed. `10-deployment.md` §*Proving a relea
 checkout"** — dropping it instead of translating it is what shipped 0.1.0 broken.
 
 ⭐ **The process and every pitfall:** [[Development Doctrine/PYPI-PUBLISHING-DRAFT-2026-09-16]].
-The steps for a given version: `RELEASE-0.1.2-NEXT.md`. Stock ffmpeg is still acquired by
-`tsubasa setup --ffmpeg` or found on PATH; it is needed only for audio (VAD) and for
-containers the native reader cannot read. ⚠ **Read `doctrine/release` first. Pipe nothing
+The steps for a given version: `RELEASE-0.1.2-NEXT.md`. ffmpeg is found on PATH or through `$TSUBASA_FFMPEG` — ⏸ the
+`tsubasa setup --ffmpeg` downloader was never built, and the refusal stopped naming it at
+0.1.4. It is needed only for audio (VAD) and for containers the native reader cannot read. ⚠ **Read `doctrine/release` first. Pipe nothing
 inside the block.**
 
 ## Step 4b — Rust ⏸

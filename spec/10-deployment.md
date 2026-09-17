@@ -78,12 +78,21 @@ JSON handling and packet parsing are **unexercised**. Named in RUNBOOK 1d as unc
 
 1. Look for `ffmpeg`/`ffprobe` on PATH, then `$TSUBASA_FFMPEG`, then the cache directory
 2. If absent and a run needs it (the VAD path, or a non-MKV container), that pair is
-   **REFUSED with an actionable reason**: *"audio analysis needs ffmpeg — run
-   `tsubasa setup --ffmpeg`"*
-3. ⭐ `tsubasa setup --ffmpeg` is the only thing that reaches the network. Explicit,
-   interactive, run once. Downloads a **stock build** (any licence is acceptable under
-   GPL-3.0), verifies the **pinned sha256**, never touches system paths
+   **REFUSED with an actionable reason**
+3. ⏸ **`tsubasa setup --ffmpeg` — SPECIFIED HERE, NEVER BUILT.** It was to be the only
+   thing that reaches the network: explicit, run once, a **stock build** (any licence is
+   acceptable under GPL-3.0), **pinned sha256**, never touching system paths
 4. ⛔ The library never downloads and never prompts. It reports in `Result.reason`
+
+🚨 **AND THE REFUSAL NAMED THAT UNBUILT COMMAND UNTIL 0.1.4 (fixed 2026-09-17).** Every
+release to 0.1.3 told the reader to run `tsubasa setup --ffmpeg`, which answers *"unknown
+option"* — the one sentence written to be acted on could not be. ⭐ **An actionable reason
+that cannot be acted on is worse than a bare one**, because it spends the reader's time
+first. The sentence now names only PATH and `$TSUBASA_FFMPEG`, and
+`test_ffmpeg_absence_refuses_with_a_sentence_the_user_can_act_on` checks every backticked
+`tsubasa <command>` in it against the CLI's own usage text — so a command invented in a
+message fails in the suite rather than in a user's terminal. If the downloader is ever
+built, this rung and that sentence come back together.
 
 ⚠ Pin the sha256 in the client. An unverified download of an executable is a
 supply-chain hole.
