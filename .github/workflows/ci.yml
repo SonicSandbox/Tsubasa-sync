@@ -77,6 +77,13 @@ jobs:
       - name: Say what actually failed
         if: failure()
         shell: bash
+        # ⛔ THE SAME UTF-8 TRAP AS THE SUITE STEP, AND IT BIT HERE FIRST.
+        # This step ran GREEN on Windows and emitted nothing at all: a
+        # failure message carrying Japanese hit a cp1252 stdout,
+        # `UnicodeEncodeError` killed the reporter, and `|| true` swallowed
+        # it. ⚠ The diagnostic failed in exactly the way it exists to report.
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           # ⚠ Collected to a file first, then emitted twice. Teeing straight
           # into the summary through process substitution can lose the tail:
@@ -92,7 +99,7 @@ jobs:
           # failure's name and message regardless of how much noise preceded
           # it, so that is what gets read.
           python - <<'PY'
-          import glob, io, os, xml.etree.ElementTree as ET
+          import glob, io, os, sys, xml.etree.ElementTree as ET
 
           found = []
           for x in sorted(glob.glob("_runs/*/*.xml")):
@@ -110,21 +117,15 @@ jobs:
                                     (node.get("message") or "").strip(),
                                     (node.text or "").strip()))
 
-          for kind, xml, name, msg, body in found:
-              print("")
-              print("%s  %s::%s" % (kind, xml, name))
-              for line in (msg.splitlines() + body.splitlines())[-25:]:
-                  print("    " + line)
-          print("")
-          print("%d failing test(s) named above" % len(found))
-          if not found:
-              print("NO test failed -- the suite runner exited non-zero for "
-                    "another reason (a collection error, or the runner "
-                    "itself). The tails below are the whole story.")
-
-          # ⛔ THE ANNOTATION. Newlines must be percent-encoded or GitHub keeps
-          # only the first line, and `%` must go first or it eats the escapes
-          # it is about to write. Capped: the API truncates a long annotation,
+          # ⛔ THE ANNOTATION IS WRITTEN FIRST, BEFORE ANYTHING IS PRINTED.
+          # Ordering, not decoration: the readable dump below is the part that
+          # can die on an encoding, and when it did the annotation never got
+          # written. The machine-readable artefact must not depend on the
+          # human-readable one surviving.
+          #
+          # Newlines must be percent-encoded or GitHub keeps only the first
+          # line, and `%` must be escaped first or it eats the escapes it is
+          # about to write. Capped at 25: the API truncates a long annotation,
           # and a truncated one that lost the test NAMES is worth nothing.
           def esc(s):
               return (s.replace("%", "%25").replace("\r", "%0D")
@@ -136,10 +137,32 @@ jobs:
               lines.append("...and %d more" % (len(found) - 25))
           if not lines:
               lines = ["the suite exited non-zero with no failing testcase in "
-                       "any JUnit XML -- look at the step summary"]
+                       "any JUnit XML -- a collection error, or the runner "
+                       "itself. Look at the log tails."]
           with io.open("_annot.txt", "w", encoding="utf-8") as fh:
               fh.write(u"::error title=%d failing test(s)::%s\n"
                        % (len(found), esc("\n".join(lines))))
+
+          # ⚠ And the dump itself replaces what it cannot encode rather than
+          # raising. Belt as well as braces: PYTHONIOENCODING is set on this
+          # step now, but a reporter that can be killed by its own subject
+          # matter has no business being the thing you rely on in an outage.
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          for kind, xml, name, msg, body in found:
+              print("")
+              print("%s  %s::%s" % (kind, xml, name))
+              for line in (msg.splitlines() + body.splitlines())[-25:]:
+                  print("    " + line)
+          print("")
+          print("%d failing test(s) named above" % len(found))
+          if not found:
+              print("NO test failed -- the suite runner exited non-zero for "
+                    "another reason (a collection error, or the runner "
+                    "itself). The tails below are the whole story.")
           PY
 
           for f in _runs/*/*.txt; do
