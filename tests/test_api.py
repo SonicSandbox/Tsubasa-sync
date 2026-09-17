@@ -679,6 +679,10 @@ def test_match_percent_is_the_human_number():
 #    mutants that survived EVERY suite in the project
 # ===========================================================================
 
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"UNC paths are a Windows concept; on POSIX these "
+                           u"strings are ordinary filenames that happen to "
+                           u"contain backslashes")
 def test_two_UNC_shares_do_not_crash_the_library(monkeypatch):
     u"""🚨 `os.path.commonpath` RAISES on two UNC shares, and the guard could
     not see it because **both UNC paths start with a backslash**.
@@ -688,6 +692,19 @@ def test_two_UNC_shares_do_not_crash_the_library(monkeypatch):
     escaped the library that promises to *return structured results*. Before
     3b nothing public called `proximity`; `scan()` made it the first thing any
     caller hits.
+
+    ⚠ **WINDOWS ONLY, AND IT TOOK A THREE-OS MATRIX TO NOTICE.** This asserts
+    Windows PATH SEMANTICS without ever having said so: on Linux and macOS a
+    backslash is an ordinary filename character, so
+    `\\\\nas\\media\\Show\\Show S01E01.mkv` is not a path on a share — it is a
+    single file sitting in the working directory. `proximity` then correctly
+    answers `SAME_DIR`, the assertion reads `1.0 == 0.0`, and the suite fails
+    on a product that is behaving properly on both platforms.
+
+    ⭐ The transferable shape: **a check written on one OS can encode that
+    OS's semantics invisibly.** Nothing in the original named a platform, and
+    it passed for a week on the only machine that ran it. The first CI run on
+    three operating systems failed it six times.
     """
     a = DISC.Item(u"\\\\nas\\media\\Show\\Show S01E01.mkv", "video")
     b = DISC.Item(u"\\\\nas\\subs\\Show S01E01.ja.srt", "subtitle")
