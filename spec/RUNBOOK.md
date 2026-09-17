@@ -55,12 +55,11 @@ LAYER 3 — needs A + B
   │           🚨 SEVEN defects came from LOOKING, none reachable by a check
 
   └── 3f  ✅ `embedded_subs()` — the "Japanese track already inside" check
-              hato needs, public. Built, pushed `8a27e0b`, CI green; ⏸ the 0.1.3 tag
-              waits for Sonic's go and his ruling on the name
+              hato needs, public. SHIPPED in 0.1.3 (2026-09-17), verified from PyPI
 
 LAYER 4
   ├── 4a  ✅ Release — PyPI `tsubasa-sync`, a `v*` tag through Trusted Publishing.
-  │           0.1.0 (yanked) · 0.1.1 · 0.1.2. Frozen binaries were NOT built
+  │           0.1.0 (yanked) · 0.1.1 · 0.1.2 · 0.1.3. Frozen binaries were NOT built
   └── 4b  ⏸ Rust — unjustified: the primitive runs at 49 ms/pair in numpy
 ```
 
@@ -1297,7 +1296,7 @@ the moment the field landed and `--json` had not been updated.
 
 
 
-## Step 3f — ✅ `embedded_subs()` — the embedded-track check hato needs — BUILT 2026-09-17, ⏸ tag
+## Step 3f — ✅ `embedded_subs()` — the embedded-track check hato needs — SHIPPED IN 0.1.3, 2026-09-17
 
 **surfaces:** `logic` `harness` `delivery` · **depends on:** 1d, 3b, and 0.1.2 PUBLISHED
 first · **authority:** `05-interface.md` §*For code built on tsubasa* · hato
