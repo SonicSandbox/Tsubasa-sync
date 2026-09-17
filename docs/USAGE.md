@@ -266,6 +266,35 @@ tsubasa.parse_subtitle_name("Show - 01.ja[cc].srt")
 # Sidecar('Show - 01', lang=ja tag=ja[cc] +cc) — stem, lang, tag, flags, ext
 ```
 
+**The subtitle tracks inside a video** *(0.1.3)*:
+
+```python
+subs = tsubasa.embedded_subtitles("Show - 01.mkv", lang="ja")
+if not subs.ok:
+    print("could not read it:", subs.reason)      # NOT the same as "no tracks"
+elif any(t.text and not t.forced for t in subs.tracks):
+    print("a full Japanese text subtitle is already inside")
+for track in subs.tracks if subs.ok else []:
+    print(track.index, track.lang, track.codec, track.text, track.bitmap, track.forced)
+```
+
+- **Check `ok` first.** A video that could not be read has no track list at all: `tracks`
+  raises. A video that was read and has no subtitle track is `ok` with `tracks == []`.
+  A file that is **still downloading or cut off** — or whose track list is damaged — is
+  not `ok` either: its header describes a file that is not all there.
+- **`text` and `bitmap` are both `False` for a codec tsubasa does not recognise.** A
+  picture-based track (PGS, VobSub, DVB) is never reported as text.
+- **With `lang=`, an empty list means "no track in that language"** — a video with only
+  English subtitles and a video with none look the same. To ask whether a video has any
+  subtitle track at all, call it without `lang`.
+- `index` is the track's position among all the video's tracks — for an ordinary file, the
+  number `ffmpeg -map 0:<index>` uses. `lang` resolves like a filename's (`jpn`, `ja-JP` →
+  `ja`); a track that states no language reads `en`, which is Matroska's default.
+- It reads the file's header only. Matroska needs nothing else; other containers need ffmpeg,
+  and without it the answer is `ok=False` with a reason.
+- Don't write `if tsubasa.embedded_subtitles(video):` — it raises, because the answer is not
+  a yes or no.
+
 → [`examples/find_missing_subtitles.py`](../examples/find_missing_subtitles.py)
 
 ### 6. What a run leaves behind

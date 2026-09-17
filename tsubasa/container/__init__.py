@@ -33,6 +33,8 @@ pair to be refused with a sentence naming `tsubasa setup --ffmpeg`.
 | A partial Cues index | **open** -> block walk | The data is there; only the shortcut was wrong |
 | ffmpeg missing and needed | **closed, loudly** | Silence would look like "no subtitles in this video" |
 | A file that is genuinely not a container | **closed** | Naming what was found, not what was wanted |
+| A Matroska track list cut off, damaged, or absent | **open** -> ffmpeg | 🚨 RUNBOOK 3f: it read as "no tracks" -- 582 of 588 truncations of a real file. The native reader raises now |
+| A Matroska file that ends before its Segment does | **OK, and `incomplete` says so** | A download in progress. Readers that can use what is there still may; a header-only answer about it may not (`embedded_subtitles`) |
 
 🚨 And the distinction this project has shipped wrong twice: **a container
 with no subtitle tracks is `OK` with an empty list, NOT an error.** 37.5% of a
@@ -55,6 +57,63 @@ KNOWN_VIDEO_EXT = {
     ".mp4", ".m4v", ".mov", ".avi", ".ts", ".m2ts", ".wmv", ".flv", ".ogm",
     ".rmvb", ".vob", ".divx", ".mpg", ".mpeg",
 }
+
+# ---------------------------------------------------------------------------
+# what a subtitle track CARRIES, from its codec -- ONE owner (RUNBOOK 3f)
+# ---------------------------------------------------------------------------
+# ⭐ Both readers' vocabularies, as MEASURED side by side on one file
+# (`_work/probe_3f_1_language_parity.py`): Matroska's CodecID natively,
+# ffmpeg's codec_name through the fallback. `S_TEXT/ASS` is `ass`,
+# `S_HDMV/PGS` is `hdmv_pgs_subtitle`, `S_VOBSUB` is `dvd_subtitle`,
+# `S_DVBSUB` is `dvb_subtitle`.
+#
+# 🚨 `pipeline.py` kept a private fragment list that had no DVB entry, so a
+# DVB bitmap track was labelled TEXT. There it cost a word in a report; for a
+# caller deciding whether a video already HAS a subtitle it skips a fetch the
+# user needed. So both now read this.
+#
+# ⛔ TEXT IS AN ALLOW-LIST, NOT "NOT BITMAP". An unrecognised codec is neither
+# -- `S_KATE`, `arib_caption`, `dvb_teletext` can each carry text or pictures
+# -- because calling a bitmap track text is the expensive mistake and calling
+# a text track unknown costs one download. And exact names, never fragments:
+# a fragment like `hdmv` calls Blu-ray TEXT subtitles (`S_HDMV/TEXTST`,
+# `hdmv_text_subtitle`) bitmaps.
+
+#: Matroska's text namespace -- every `S_TEXT/...` CodecID is text.
+_TEXT_PREFIX = "s_text/"
+
+TEXT_CODECS = frozenset((
+    # Matroska, outside the S_TEXT/ namespace
+    "s_ssa", "s_ass", "s_hdmv/textst",
+    "d_webvtt/subtitles", "d_webvtt/captions", "d_webvtt/descriptions",
+    # ffmpeg codec_name
+    "subrip", "srt", "ass", "ssa", "webvtt", "mov_text", "text", "microdvd",
+    "mpl2", "pjs", "realtext", "sami", "stl", "subviewer", "subviewer1",
+    "vplayer", "jacosub", "ttml", "eia_608", "hdmv_text_subtitle",
+))
+
+BITMAP_CODECS = frozenset((
+    # Matroska
+    "s_hdmv/pgs", "s_vobsub", "s_vobsub/zlib", "s_dvbsub", "s_image/bmp",
+    # ffmpeg codec_name, and the decoder names some builds print instead
+    "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub",
+    "pgssub", "dvdsub", "dvbsub",
+))
+
+
+def _codec_key(codec):
+    return (codec or u"").strip().lower()
+
+
+def is_text_codec(codec):
+    """True only for a codec KNOWN to carry text. Unrecognised is False."""
+    key = _codec_key(codec)
+    return key.startswith(_TEXT_PREFIX) or key in TEXT_CODECS
+
+
+def is_bitmap_codec(codec):
+    """True only for a codec KNOWN to carry pictures. Unrecognised is False."""
+    return _codec_key(codec) in BITMAP_CODECS
 
 
 class Track(object):
@@ -100,11 +159,11 @@ class ContainerInfo(object):
 
     __slots__ = ("path", "format", "duration", "tracks", "chapters",
                  "outcome", "reason", "warnings", "reader", "bytes_read",
-                 "seeks")
+                 "seeks", "incomplete")
 
     def __init__(self, path=None, format=None, duration=None, tracks=None,
                  chapters=None, outcome=Outcome.OK, reason=u"", warnings=None,
-                 reader=None, bytes_read=None, seeks=None):
+                 reader=None, bytes_read=None, seeks=None, incomplete=u""):
         self.path = path
         self.format = format
         self.duration = duration
@@ -116,6 +175,11 @@ class ContainerInfo(object):
         self.reader = reader
         self.bytes_read = bytes_read
         self.seeks = seeks
+        # ⚠ RUNBOOK 3f: a sentence when a Matroska file ends before its own
+        # Segment does (a download in progress, or a cut), whichever reader
+        # answered; u"" otherwise. The read is still OK -- this says the file
+        # it describes is not all there.
+        self.incomplete = incomplete
 
     @property
     def ok(self):
@@ -154,7 +218,8 @@ def _to_info(path, raw, reader):
         tracks=tracks, chapters=raw.get("chapters") or [],
         outcome=Outcome.OK, reason=u"",
         warnings=list(raw.get("warnings") or []), reader=reader,
-        bytes_read=raw.get("bytes_read"), seeks=raw.get("seeks"))
+        bytes_read=raw.get("bytes_read"), seeks=raw.get("seeks"),
+        incomplete=raw.get("incomplete") or u"")
 
 
 def _error(path, reason):
@@ -254,6 +319,14 @@ def read(path, timing=True, cache_dir=None, allow_ffmpeg=True,
             if native_reason else u""))
 
     info = _to_info(path, raw, "ffmpeg")
+    if mkv.looks_like_matroska(head):
+        # ⚠ ffprobe reads a cut-off file happily ("File ended prematurely",
+        # exit 0), so the Matroska header is asked directly -- an incomplete
+        # file reads as incomplete whichever rung answered (RUNBOOK 3f).
+        try:
+            info.incomplete = mkv.incompleteness(path)
+        except (IOError, OSError):
+            pass
     if native_reason:
         info.warnings.insert(0, u"the native Matroska reader stopped (%s), so "
                                 u"this file was read through ffmpeg instead"

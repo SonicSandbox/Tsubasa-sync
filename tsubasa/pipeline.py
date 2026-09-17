@@ -72,15 +72,15 @@ from .apply import apply_plan
 from .naming import series as _series
 from .verdict import BITMAP_TRACK, CONFIDENT, ERROR, REFUSED, TEXT_TRACK
 
-#: Codec fragments that mean a track carries BITMAPS rather than text. Matroska
-#: says `S_HDMV/PGS` and `S_VOBSUB`; ffmpeg says `hdmv_pgs_subtitle` and
-#: `dvd_subtitle`, so both vocabularies are matched.
+#: ⚠ WHETHER A TRACK CARRIES BITMAPS IS DECIDED IN `container/`, where both
+#: readers' codec vocabularies live (RUNBOOK 3f). This module kept its own
+#: fragment list, which had no DVB entry and called Blu-ray TEXT subtitles
+#: (`S_HDMV/TEXTST`) bitmaps.
 #:
 #: ⚠ THE LABEL IS ALL THIS DECIDES. `verdict.py`: a bitmap track's ON-times are
 #: cue moments like any other -- the container block timestamps know nothing
 #: about the codec -- so the band is identical either way. Getting it wrong
 #: costs a wrong word in a report, never a wrong file.
-_BITMAP_CODECS = ("pgs", "vobsub", "dvd_sub", "dvdsub", "hdmv")
 
 
 class Reference(object):
@@ -734,8 +734,10 @@ def reference_for(video_path, reader):
 
 
 def _is_bitmap(codec):
-    lowered = (codec or u"").lower()
-    return any(fragment in lowered for fragment in _BITMAP_CODECS)
+    # Kept as this module's own name: `probe_adj26` mutates `_is_bitmap`.
+    # Imported at call time, the way `_default_reader` above does it.
+    from . import container as _container
+    return _container.is_bitmap_codec(codec)
 
 
 # ---------------------------------------------------------------------------

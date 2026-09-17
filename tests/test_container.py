@@ -159,7 +159,8 @@ def _track_entry(number, ttype, codec, language=u"und", name=u"",
     body = (_el(E_TRACKNUM, _u(number))
             + _el(E_TRACKTYPE, _u(ttype))
             + _el(E_CODECID, _s(codec))
-            + _el(E_LANG, _s(language))
+            # `language=None` leaves the element OUT, which is a real shape.
+            + (b"" if language is None else _el(E_LANG, _s(language)))
             + _el(E_FLAGDEFAULT, _u(1 if default else 0))
             + _el(E_FLAGFORCED, _u(1 if forced else 0)))
     if name:
@@ -662,6 +663,17 @@ def test_the_bcp47_language_field_wins_over_the_legacy_one(tmp_path):
     sub = container.read(p, timing=False).subtitle_tracks[0]
     assert sub.language == u"ja", (
         "legacy 'und' beat the BCP-47 'ja'; got %r" % sub.language)
+
+
+def test_a_track_with_NO_language_element_reads_eng_the_matroska_default(tmp_path):
+    """🚨 RUNBOOK 3f, measured: this read `""` natively and `eng` through
+    ffmpeg for the SAME file, so a video's language depended on which rung of
+    the ladder answered. `eng` is the format's default, like `default=True`."""
+    p = _write_mkv(tmp_path / "nolang.mkv", DEFAULT_CUES, language=None)
+    sub = container.read(p, timing=False).subtitle_tracks[0]
+    assert sub.language == u"eng", sub.language
+    explicit = _write_mkv(tmp_path / "und.mkv", DEFAULT_CUES, language=u"und")
+    assert container.read(explicit, timing=False).subtitle_tracks[0].language == u"und"
 
 
 def test_the_duration_is_read_and_scaled(tmp_path):

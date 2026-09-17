@@ -321,14 +321,18 @@ def test_a_bitmap_track_is_labelled_as_one_in_both_vocabularies():
     u"""⚠ Matroska says `S_HDMV/PGS`; ffmpeg says `hdmv_pgs_subtitle`. The
     label is all this decides -- the band is identical -- but a wrong label in
     a bug report costs somebody an hour."""
+    # ⚠ DVB was missing from the pipeline's own fragment list until 3f moved
+    # the vocabulary to `container/`, and the fragment `hdmv` called Blu-ray
+    # TEXT subtitles (`S_HDMV/TEXTST`) bitmaps.
     for codec in (u"S_HDMV/PGS", u"hdmv_pgs_subtitle", u"S_VOBSUB",
-                  u"dvd_subtitle"):
+                  u"dvd_subtitle", u"S_DVBSUB", u"dvb_subtitle"):
         ref, _why = PIPE.reference_for(
             "/x/v.mkv", _reader([_track(0, CUE_STARTS, codec=codec)]))
         assert ref.kind == V.BITMAP_TRACK, codec
-    ref, _why = PIPE.reference_for(
-        "/x/v.mkv", _reader([_track(0, CUE_STARTS, codec=u"S_TEXT/UTF8")]))
-    assert ref.kind == V.TEXT_TRACK
+    for codec in (u"S_TEXT/UTF8", u"S_HDMV/TEXTST", u"hdmv_text_subtitle"):
+        ref, _why = PIPE.reference_for(
+            "/x/v.mkv", _reader([_track(0, CUE_STARTS, codec=codec)]))
+        assert ref.kind == V.TEXT_TRACK, codec
 
 
 def test_an_unreadable_container_is_reported_as_the_containers_own_reason():

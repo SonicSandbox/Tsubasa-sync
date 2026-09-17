@@ -242,6 +242,11 @@ def read(path, timing=True, cache_dir=None):
     for stream in meta.get("streams", []):
         kind = stream.get("codec_type") or "other"
         tags = stream.get("tags") or {}
+        if (stream.get("disposition") or {}).get("metadata"):
+            # ⚠ ffprobe calls a WebVTT METADATA track (`D_WEBVTT/METADATA`)
+            # a subtitle stream and flags it `metadata` -- measured at RUNBOOK
+            # 3f. The native reader calls it what it is, so this does too.
+            kind = "other"
         tracks.append({
             # ⚠ `number` is the container's own identifier and its MEANING
             # differs by reader: a Matroska TrackNumber on the native path, an

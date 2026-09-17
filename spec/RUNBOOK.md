@@ -54,8 +54,12 @@ LAYER 3 — needs A + B
   │           group is the only thing that asks before writing.
   │           🚨 SEVEN defects came from LOOKING, none reachable by a check
 
+  └── 3f  ⏳ `embedded_subtitles()` — the "Japanese track already inside" check
+              hato needs, public. Ships 0.1.3, AFTER 0.1.2 is published
+
 LAYER 4
-  ├── 4a  Freeze + release (GPL-3.0; stock ffmpeg via `tsubasa setup --ffmpeg`)
+  ├── 4a  ✅ Release — PyPI `tsubasa-sync`, a `v*` tag through Trusted Publishing.
+  │           0.1.0 (yanked) · 0.1.1 · 0.1.2. Frozen binaries were NOT built
   └── 4b  ⏸ Rust — unjustified: the primitive runs at 49 ms/pair in numpy
 ```
 
@@ -1292,13 +1296,47 @@ the moment the field landed and `--json` had not been updated.
 
 
 
-## Step 4a — Release
+## Step 3f — ⏳ `embedded_subtitles()` — the embedded-track check hato needs (ships 0.1.3)
+
+**surfaces:** `logic` `harness` `delivery` · **depends on:** 1d, 3b, and 0.1.2 PUBLISHED
+first · **authority:** `05-interface.md` §*For code built on tsubasa* · hato
+`06-edge-cases.md` §6 and `03-permissions.md` §*The read rule*
+
+hato's read rule opens `if has_embedded_text_track(video, lang): SKIP` — a video that
+already carries a Japanese text track needs no fetch. tsubasa reads every video's tracks
+(`container.read`, 1d) and exposes no public way to ask. **One public function, added and
+never renamed.**
+
+| | |
+| --- | --- |
+| **Build** | `tsubasa/embedded.py`: `embedded_subtitles(video, lang=None)` → `EmbeddedSubtitles` (`ok`, `reason`, `tracks`) of `EmbeddedSubtitle` (`index`, `lang`, `tag`, `codec`, `text`, `bitmap`, `forced`, `default`, `name`). A header-only read (`timing=False`) through the one accessor |
+| **Rules** | ⛔ **Unreadable is not "none":** `ok=False` with the reader's reason, and `.tracks` RAISES — nobody can read *"no tracks"* off a file nobody opened. A readable video with no subtitle track is `ok=True`, `tracks=[]` · `lang=` resolves exactly as `unpaired(lang=)` does, and an unrecognised tag raises · ⭐ **text is an ALLOW-list:** an unrecognised codec is neither text nor bitmap, because a bitmap track called text makes hato skip a fetch the user needed, while the reverse costs one download · `forced` is reported, never filtered — hato's own rule decides (*"A forced sub is not a full sub"*) |
+| 🚨 **Measured first** | `_work/probe_3f_1_language_parity.py`, one file through both readers (ffprobe from `media-kit/bin`): **a TrackEntry with no `Language` element read `""` natively and `eng` through ffmpeg** — `eng` is the Matroska default, so the native reader takes it. Explicit `und` reads `und` / `""` (both undetermined). ⚠ **ffmpeg IGNORES `LanguageBCP47`**: `ja-JP` beside a legacy `und` read `ja-JP` natively and `""` through ffmpeg — the native reader is right and is the one that reads Matroska. And **`S_DVBSUB` / `dvb_subtitle` were missing from `pipeline._BITMAP_CODECS`**, so a DVB track was labelled text. The vocabulary moves to `container/`, one owner, both readers' names |
+| **Test** | `tests/test_embedded.py`, its own suite — synthetic Matroska through the real reader, both directions of every rule; plus the absent-`Language` default in `test_container.py` and DVB in `test_pipeline.py` |
+| **Prove** | the suite + the full runner green · mutants: `lang` filter ignored · a bitmap codec called text · unreadable returns `[]` · a subtitle-less container reported unreadable · the `eng` default removed · `forced` dropped · container position replaced by subtitle position · then the installed wheel, outside a checkout, on real media |
+| **Ship** | 0.1.3 through [[Development Doctrine/PYPI-PUBLISHING-DRAFT-2026-09-16]] §2.5–2.7. ⛔ **The tag waits for Sonic's go, and the NAME is his to veto before it** — once published it is a compatibility promise |
+| 🚨 **The adversarial pass** | One agent, ~50 minutes, against 14 green checks and 16 killed mutants. **One HIGH, and it broke the function's central claim:** a Matroska file CUT OFF — a download in progress — or with a DAMAGED header read as *readable, with no (or fewer) subtitle tracks*: 582 of 588 truncations of the real Sintel file came back `ok=True, []`, and a cut at 2,000 bytes returned a Japanese track. Cause: `mkv._children` clamps an element that runs past its parent or the file and stops quietly, and `mkv.read` never recorded that the track list was cut, damaged or never reached. **Fixed at the reader:** a clamped, short-stopping or unknown-size track list, or NO track list, raises `ContainerError` — so the ladder falls back to ffmpeg as it does for any walk that cannot finish — and a file that ends before its own Segment does sets `ContainerInfo.incomplete`, whichever rung answered (ffprobe reads such a file with exit 0). ⚠ **And eight checks that could not fail**, each now a check that can: track numbers written 1, 2, 3 so `TrackNumber - 1` passed as the index; 3 of 12 bitmap names pinned; `japanese` the only bad tag; the ffmpeg rung's `forced`/`language` checked only where ffprobe existed (now against a RECORDED ffprobe output, `_work/probe_3f_4_record_ffprobe.py`, on every machine); a byte ceiling a full read never reached (now measured against a full read of the same file). Plus: empty `Language`/`FlagDefault` elements take their EBML defaults, `S_VOBSUB/ZLIB` is bitmap, a WebVTT METADATA stream is not a subtitle on the ffmpeg rung, a bytes path works, and a header read no longer seeks to the end of the file for the Cues. ⚠ **Not fixed, and said so:** `index` equals ffmpeg's stream index on ordinary files only — ffmpeg drops button/logo/control entries and entries with no type or codec (documented, not aligned). 🚨 **Round 2 — the adversary's own reproductions re-run against the fix:** 2,400 of 2,400 truncations `ok=False`, and the defect found one rung down — ffprobe reads several damaged files as exit 0 with NO streams, so a file with no readable track of any kind is now `ok=False` too |
+| **hato** | ⚠ **hato's spec was being edited by a concurrent session while this was built** (its read rule already calls *"`track_reader(video)` — T4, tsubasa's public reader"*, name unknown), so it was NOT edited from here. The call it needs: `subs = tsubasa.embedded_subtitles(video)` → `if not subs.ok:` (its rule has no branch for an unreadable video yet) → `tracks = subs.tracks` → `has_text_track` is `any(t.text and not t.forced and t.lang == "ja" for t in tracks)` — forced excluded by hato's own `.ja.forced.srt` rule — and `not tracks` is its no-track skip. ⛔ `if not subs:` raises, by design. ⚠ **Two traps the adversary found in hato's use, not in tsubasa:** the no-track skip must use the UNFILTERED call — filtered by `lang="ja"`, *English only* and *none* both come back empty, and every video without Japanese would be skipped; and a Japanese text track that is not a full subtitle but is not flagged forced either (`name="OP/ED Kanji Karaoke"`) passes `text and not forced` — the name is on the track for hato to judge |
+
+---
+
+## Step 4a — ✅ Release — PyPI, not frozen binaries
 
 **surfaces:** `delivery` · **authority:** `10-deployment.md`
 
-GPL-3.0. Stock ffmpeg is acquired by `tsubasa setup --ffmpeg` (pinned sha256) or found on
-PATH; it is needed only for audio (VAD) and for containers the native reader cannot
-read. ⚠ **Read `doctrine/release` first. Pipe nothing inside the block.**
+⚠ **What shipped differs from this step's original plan, and the plan is kept honest here
+rather than silently rewritten.** It asked for PyInstaller binaries on GitHub Releases; the
+release became a **pip package**, `tsubasa-sync` on PyPI, published by a `v*` tag through
+Trusted Publishing. 0.1.0 was yanked (`sync()` on a folder raised `ConfigError` for every
+installed copy); 0.1.1 and 0.1.2 followed. `10-deployment.md` §*Proving a release* claim 3,
+*"runs on a clean machine"*, **translates to "the installed package runs outside any
+checkout"** — dropping it instead of translating it is what shipped 0.1.0 broken.
+
+⭐ **The process and every pitfall:** [[Development Doctrine/PYPI-PUBLISHING-DRAFT-2026-09-16]].
+The steps for a given version: `RELEASE-0.1.2-NEXT.md`. Stock ffmpeg is still acquired by
+`tsubasa setup --ffmpeg` or found on PATH; it is needed only for audio (VAD) and for
+containers the native reader cannot read. ⚠ **Read `doctrine/release` first. Pipe nothing
+inside the block.**
 
 ## Step 4b — Rust ⏸
 

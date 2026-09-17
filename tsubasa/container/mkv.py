@@ -247,13 +247,18 @@ class _Element(object):
     header length afterwards is guesswork and was a bug in the first draft.
     """
 
-    __slots__ = ("id", "size", "start", "body")
+    __slots__ = ("id", "size", "start", "body", "clamped")
 
-    def __init__(self, eid, size, start, body):
+    def __init__(self, eid, size, start, body, clamped=False):
         self.id = eid
         self.size = size
         self.start = start
         self.body = body
+        # ⚠ True when the element declared MORE bytes than its parent or the
+        # file has, and `size` was cut down to fit. Reading on is right for
+        # most elements; for the track list it means entries are missing
+        # (RUNBOOK 3f), so it has to be visible to the caller.
+        self.clamped = clamped
 
     @property
     def end(self):
@@ -293,7 +298,7 @@ def _children(r, start, end, budget=MAX_HEADER_ELEMENTS):
         if body + size > end:
             # Declared longer than its parent -- a damaged tail. Yield it
             # clamped so the elements before it are not lost, then stop.
-            yield _Element(eid, end - body, pos, body)
+            yield _Element(eid, end - body, pos, body, clamped=True)
             return
         yield _Element(eid, size, pos, body)
         nxt = body + size
@@ -315,7 +320,8 @@ def _open_element(r, pos, want_id, limit):
     if eid != want_id or size is None:
         return None
     body = pos + id_len + size_len
-    return _Element(eid, min(size, max(0, limit - body)), pos, body)
+    room = max(0, limit - body)
+    return _Element(eid, min(size, room), pos, body, clamped=size > room)
 
 
 # --------------------------------------------------------------------------
@@ -333,19 +339,55 @@ def _read_info(r, el, out):
             out["duration_raw"] = read_float(r, c.size)
 
 
+def _damaged_tracks(what, where, detail):
+    return ContainerError(u"the track list is %s at byte %d (%s), so the tracks "
+                          u"it names cannot be trusted" % (what, where, detail))
+
+
 def _read_tracks(r, el):
+    u"""The TrackEntries of a Tracks element. Raises when the list is not WHOLE.
+
+    🚨 RUNBOOK 3f, found by an adversarial pass: this used to stop quietly
+    wherever the bytes stopped making sense and return what it had. A file cut
+    off inside its track list, or with damage at its second entry, came back
+    as a READABLE file with NO or FEWER subtitle tracks -- *"could not read"*
+    reported as *"has none"*, which `ContainerError`'s own docstring forbids.
+    So a clamped, unknown-size or short-stopping list raises, and the ladder
+    falls back to ffmpeg exactly as it does for any walk that cannot finish.
+    """
+    if el.clamped:
+        raise _damaged_tracks(u"cut off", el.start,
+                              u"it declares more bytes than the file has")
     tracks = []
+    reached = el.body
     for c in _children(r, el.body, el.end):
         if c.size is None:
-            break
+            raise _damaged_tracks(u"damaged", c.start,
+                                  u"an element inside it declares an unknown size")
+        if c.clamped:
+            raise _damaged_tracks(u"cut off", c.start,
+                                  u"an entry runs past the end of the list")
+        reached = c.end
         if c.id != TRACK_ENTRY:
             continue
-        t = {"number": None, "type": None, "codec": u"", "language": u"",
+        # ⚠ `eng` IS THE MATROSKA DEFAULT FOR AN ABSENT `Language` ELEMENT, the
+        # same way `default` defaults to True just below. It read `""` here,
+        # and ffmpeg -- which applies the spec default -- read `eng` for the
+        # SAME file, so one video's language depended on which rung of the
+        # ladder answered. Measured side by side at RUNBOOK 3f
+        # (`_work/probe_3f_1_language_parity.py`).
+        t = {"number": None, "type": None, "codec": u"", "language": u"eng",
              "language_bcp47": u"", "name": u"", "default": True,
              "forced": False}
+        field_reached = c.body
         for f in _children(r, c.body, c.end):
             if f.size is None:
-                break
+                raise _damaged_tracks(u"damaged", f.start,
+                                      u"a field declares an unknown size")
+            if f.clamped:
+                raise _damaged_tracks(u"cut off", f.start,
+                                      u"a field runs past the end of its entry")
+            field_reached = f.end
             r.seek(f.body)
             if f.id == TRACK_NUMBER:
                 t["number"] = read_uint(r, f.size)
@@ -354,7 +396,8 @@ def _read_tracks(r, el):
             elif f.id == CODEC_ID:
                 t["codec"] = read_string(r, f.size)
             elif f.id == TRACK_LANGUAGE:
-                t["language"] = read_string(r, f.size)
+                # ⚠ An EMPTY element takes its default too (EBML): `eng`.
+                t["language"] = read_string(r, f.size) or u"eng"
             elif f.id == TRACK_LANGUAGE_BCP47:
                 # ⚠ The newer BCP-47 field WINS when both are present. A file
                 # carrying `und` in the legacy field and `ja` here is common,
@@ -363,11 +406,18 @@ def _read_tracks(r, el):
             elif f.id == TRACK_NAME:
                 t["name"] = read_string(r, f.size)
             elif f.id == FLAG_DEFAULT:
-                t["default"] = bool(read_uint(r, f.size))
+                # ⚠ An EMPTY flag is its default, which for FlagDefault is 1.
+                t["default"] = bool(read_uint(r, f.size)) if f.size else True
             elif f.id == FLAG_FORCED:
                 t["forced"] = bool(read_uint(r, f.size))
+        if field_reached != c.end:
+            raise _damaged_tracks(u"damaged", field_reached,
+                                  u"an entry's fields stop before the entry ends")
         if t["number"] is not None:
             tracks.append(t)
+    if reached != el.end:
+        raise _damaged_tracks(u"damaged or cut off", reached,
+                              u"its entries stop before the list ends")
     return tracks
 
 
@@ -811,6 +861,72 @@ def _to_cues(pairs):
 # the reader
 # --------------------------------------------------------------------------
 
+def _find_segment(r, size):
+    u"""The Segment element, and a sentence if the file ends before it does.
+
+    -> (`_Element`, u"" or the incompleteness sentence). Raises ContainerError.
+    Skips non-Segment top-level elements rather than assuming position, because
+    a leading Void is legal.
+    """
+    hdr = _open_element(r, 0, EBML_HEADER, size)
+    if hdr is None:
+        raise ContainerError(
+            "the EBML header at offset 0 could not be read as an element")
+    pos = hdr.end
+    for _ in range(MAX_TOP_LEVEL):
+        if not (0 <= pos < size):
+            break
+        r.seek(pos)
+        eid, id_len = read_vint(r, keep_marker=True)
+        if eid is None:
+            break
+        ssize, size_len = read_vint(r)
+        if ssize is None:
+            break
+        body = pos + id_len + size_len
+        if eid == SEGMENT:
+            unknown = ssize == UNKNOWN_SIZE.get(size_len)
+            seg = _Element(eid, (size - body) if unknown
+                           else min(ssize, size - body), pos, body)
+            incomplete = u""
+            if not unknown and body + ssize > size:
+                # ⭐ RUNBOOK 3f: the file ENDS BEFORE ITS OWN SEGMENT DOES -- a
+                # download in progress, or a cut. Not an error for a read that
+                # can still use what is there, but a header-only answer about
+                # such a file is an answer about a file that does not exist
+                # yet. Reported, never silently dropped.
+                incomplete = (u"the file is incomplete: it is %d bytes and its "
+                              u"own header says it runs to %d -- still "
+                              u"downloading, or cut off" % (size, body + ssize))
+            return seg, incomplete
+        nxt = body + ssize
+        if nxt <= pos:
+            break
+        pos = nxt
+    raise ContainerError(
+        "no Segment element found in the first %d top-level elements"
+        % MAX_TOP_LEVEL)
+
+
+def incompleteness(path):
+    u"""The sentence `read()` records when a Matroska file ends before its own
+    Segment does, from the headers alone. -> u"" when it does not, when the
+    Segment's size is unknown, or when the file is not readable Matroska.
+
+    ⭐ For the ffmpeg rung: `container.read` asks this so an incomplete file is
+    reported the same whichever reader answered (RUNBOOK 3f).
+    """
+    size = os.path.getsize(path)
+    with open(str(path), "rb") as raw:
+        r = _Reader(raw, size)
+        if not looks_like_matroska(r.read(4)):
+            return u""
+        try:
+            return _find_segment(r, size)[1]
+        except ContainerError:
+            return u""
+
+
 def looks_like_matroska(head):
     """The EBML magic. WebM is Matroska and reads identically here."""
     return head[:4] == MAGIC
@@ -844,44 +960,13 @@ def read(path, timing=True, want_types=(SUBTITLE,), use_index=True):
                 "not Matroska: expected the EBML magic %r at offset 0, found %r"
                 % (MAGIC, head))
 
-        hdr = _open_element(r, 0, EBML_HEADER, size)
-        if hdr is None:
-            raise ContainerError(
-                "the EBML header at offset 0 could not be read as an element")
-
-        # Find the Segment. Skipping non-Segment top-level elements rather
-        # than assuming position, because a leading Void is legal.
-        seg = None
-        pos = hdr.end
-        for _ in range(MAX_TOP_LEVEL):
-            if not (0 <= pos < size):
-                break
-            r.seek(pos)
-            eid, id_len = read_vint(r, keep_marker=True)
-            if eid is None:
-                break
-            ssize, size_len = read_vint(r)
-            if ssize is None:
-                break
-            body = pos + id_len + size_len
-            if eid == SEGMENT:
-                unknown = ssize == UNKNOWN_SIZE.get(size_len)
-                seg = _Element(eid, (size - body) if unknown
-                               else min(ssize, size - body), pos, body)
-                break
-            nxt = body + ssize
-            if nxt <= pos:
-                break
-            pos = nxt
-        if seg is None:
-            raise ContainerError(
-                "no Segment element found in the first %d top-level elements"
-                % MAX_TOP_LEVEL)
+        seg, incomplete = _find_segment(r, size)
         seg_start, seg_end = seg.body, min(seg.end, size)
 
         info = {"timescale": 1000000, "duration_raw": None}
         seek_targets = {}
         track_dicts = []
+        tracks_found = False
         chapters = []
         cues_el = None
         first_cluster = None
@@ -900,6 +985,7 @@ def read(path, timing=True, want_types=(SUBTITLE,), use_index=True):
                 _read_info(r, c, info)
             elif c.id == TRACKS:
                 track_dicts = _read_tracks(r, c)
+                tracks_found = True
             elif c.id == SEEK_HEAD:
                 _read_seek_head(r, c, seg_start, seek_targets)
             elif c.id == CHAPTERS:
@@ -910,10 +996,20 @@ def read(path, timing=True, want_types=(SUBTITLE,), use_index=True):
         # Anything the linear scan did not reach, the SeekHead knows about --
         # which is the normal layout for Cues, and for a file whose Tracks
         # element was rewritten after muxing.
-        if not track_dicts and TRACKS in seek_targets:
+        if not tracks_found and TRACKS in seek_targets:
             el = _open_element(r, seek_targets[TRACKS], TRACKS, seg_end)
             if el is not None:
                 track_dicts = _read_tracks(r, el)
+                tracks_found = True
+        if not tracks_found:
+            # 🚨 RUNBOOK 3f: NO track list is not an EMPTY track list. Every
+            # real video names its tracks; finding none means the walk never
+            # reached them -- a Segment of zeros, a size field that lies, a
+            # Tracks element after the clusters with nothing pointing at it --
+            # and ffmpeg, which scans harder, can often still read them.
+            raise ContainerError(
+                u"no track list was found in this Matroska file%s"
+                % (u" (%s)" % incomplete if incomplete else u""))
         if info["duration_raw"] is None and INFO in seek_targets:
             el = _open_element(r, seek_targets[INFO], INFO, seg_end)
             if el is not None:
@@ -922,7 +1018,9 @@ def read(path, timing=True, want_types=(SUBTITLE,), use_index=True):
             el = _open_element(r, seek_targets[CHAPTERS], CHAPTERS, seg_end)
             if el is not None:
                 chapters = _read_chapters(r, el)
-        if cues_el is None and CUES in seek_targets:
+        if timing and cues_el is None and CUES in seek_targets:
+            # Only a TIMING read uses the index; a header read has no reason
+            # to seek to the end of a 1.4 GB file for it.
             cues_el = _open_element(r, seek_targets[CUES], CUES, seg_end)
 
         timescale = info["timescale"] or 1000000
@@ -941,6 +1039,7 @@ def read(path, timing=True, want_types=(SUBTITLE,), use_index=True):
         result = {"format": "matroska", "duration": duration,
                   "timescale": timescale, "tracks": track_dicts,
                   "chapters": chapters, "warnings": warnings,
+                  "incomplete": incomplete,
                   "bytes_read": r.nread, "seeks": r.nseek}
 
         wanted = {t["number"] for t in track_dicts
