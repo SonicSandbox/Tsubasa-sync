@@ -1584,3 +1584,163 @@ def test_a_gap_in_an_AGREEING_library_is_still_reported_unpaired(tmp_path):
     report = PIPE.sync(API.scan(str(tmp_path)), results=False)
     assert len(report.unpaired) == 1, report.unpaired
     assert u"E09" in report.unpaired[0][0]
+
+
+# ---------------------------------------------------------------------------
+# ⭐ suffix — a retimed COPY beside the original (0.1.2)
+# ---------------------------------------------------------------------------
+
+def _two_candidates(folder):
+    video = _write_mkv(folder / "Show S01E01.mkv", MKV_CUES,
+                       duration_s=RUNTIME, per_cluster=4)
+    good = _write(folder / "[Erai-raws] Show - 01.ja.srt", _shifted(2.0))
+    thin = _write(folder / "[shincaps] Show - 01.ja.srt",
+                  _srt([t + 2.0 for t in CUE_STARTS[:60]]))
+    return video, good, thin
+
+
+def _bytes_of(folder):
+    return dict((p.name, p.read_bytes()) for p in folder.iterdir()
+                if p.is_file())
+
+
+def test_suffix_writes_a_retimed_COPY_beside_the_original_and_changes_nothing_else(
+        tmp_path, monkeypatch):
+    u"""⭐ The whole promise, checked by BYTES across the folder: exactly one new
+    file, every original identical, nothing trashed — and the copy is really
+    retimed and still reads as Japanese."""
+    from tsubasa import formats as FORMATS
+    from tsubasa import sidecar as SIDECAR
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+    library = tmp_path / "library"
+    library.mkdir()
+    _two_candidates(library)
+    before = _bytes_of(library)
+    trash = tmp_path / "trash"
+
+    got = PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+                    trash_root=str(trash), results=False)
+
+    written = [r for r in got if r.output_path]
+    assert len(written) == 1, [(r.subtitle, r.outcome, r.reason) for r in got]
+    out = written[0].output_path
+    assert os.path.basename(out) == u"[Erai-raws] Show - 01_rt.ja.srt", out
+    assert os.path.dirname(os.path.abspath(out)) == str(library)
+    after = _bytes_of(library)
+    for name, data in before.items():
+        assert after[name] == data, u"%s was changed" % name
+    assert set(after) - set(before) == {os.path.basename(out)}
+    assert not trash.exists() or not os.listdir(str(trash)), u"something was trashed"
+    assert not written[0].superseded
+    assert SIDECAR.parse(os.path.basename(out)).lang == u"ja"
+    assert abs(FORMATS.read_file(out).cues[0].start - CUE_STARTS[0]) < 0.1, \
+        u"the copy is not retimed"
+
+
+def test_a_suffixed_copy_is_never_retimed_into_rt_rt(tmp_path, monkeypatch):
+    u"""🚨 The copy sits beside its original and is offered for the same
+    episode. Measured, it would be written again as `_rt_rt` on every run.
+    ⚠ Without the results store the second run also cannot tell the existing
+    copy is its own, so it must refuse to write over it — and say so."""
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+    library = tmp_path / "library"
+    library.mkdir()
+    _two_candidates(library)
+    trash = str(tmp_path / "trash")
+    PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+              trash_root=trash, results=False)
+    copy = library / "[Erai-raws] Show - 01_rt.ja.srt"
+    first = copy.read_bytes()
+
+    again = PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+                      trash_root=trash, results=False)
+
+    assert not [p for p in os.listdir(str(library)) if u"_rt_rt" in p]
+    assert copy.read_bytes() == first, u"the earlier copy was written over"
+    assert any(u"already exists" in (r.reason or u"") for r in again), \
+        [(r.outcome, r.reason) for r in again]
+
+
+def test_with_the_results_store_a_suffixed_folder_re_runs_as_SETTLED(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+    monkeypatch.setenv("TSUBASA_CACHE", str(tmp_path / "store"))
+    library = tmp_path / "library"
+    library.mkdir()
+    _two_candidates(library)
+    trash = str(tmp_path / "trash")
+    first = PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+                      trash_root=trash)
+    assert [r for r in first if r.output_path], first.summary()
+
+    again = PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+                      trash_root=trash)
+
+    assert again.settled, (again.summary(),
+                           [(r.outcome, r.reason) for r in again])
+    assert not [r for r in again if r.output_path]
+
+
+def test_suffix_on_an_EXPLICIT_pair_writes_the_copy_beside_that_subtitle(
+        tmp_path):
+    video = _write_mkv(tmp_path / "Show S01E01.mkv", MKV_CUES,
+                       duration_s=RUNTIME, per_cluster=4)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    sub = _write(elsewhere / "whatever.ja.srt", _shifted(2.0))
+    original = open(sub, "rb").read()
+
+    got = PIPE.sync([(str(video), sub)], write=True, suffix=u"_rt",
+                    results=False)
+
+    assert os.path.abspath(got[0].output_path) == \
+        str(elsewhere / "whatever_rt.ja.srt"), (got[0].outcome, got[0].reason)
+    assert open(sub, "rb").read() == original
+
+
+def test_suffix_REFUSES_the_options_it_contradicts(tmp_path):
+    u"""⛔ Loudly, before anything is read: each of these would silently mean
+    something other than *a copy beside the original*."""
+    scan = API.scan(str(tmp_path))
+    for extra in ({u"rename": False}, {u"out_dir": str(tmp_path / "o")},
+                  {u"keep_all": True}):
+        with pytest.raises(ValueError):
+            PIPE.sync(scan, suffix=u"_rt", **extra)
+    for bad in (u"", u"_r.t", u"a/b", u" _rt"):
+        with pytest.raises(ValueError):
+            PIPE.sync(scan, suffix=bad)
+
+
+def test_a_run_WITHOUT_a_suffix_records_exactly_the_shape_it_always_did():
+    u"""⚠ Every record written before 0.1.2 has this shape. A new key on every
+    run would make every settled library re-measure itself after upgrading."""
+    from tsubasa import results as RESULTS
+    assert RESULTS.run_shape() == {u"rename": True, u"out_dir": None,
+                                   u"keep_all": False, u"dedupe": True}
+    assert RESULTS.run_shape(suffix=u"_rt")[u"suffix"] == u"_rt"
+
+
+def test_a_COPY_LEFT_ALONE_is_reported_and_never_becomes_rt_rt(tmp_path,
+                                                               monkeypatch):
+    u"""⚠ THE CHECK ABOVE COULD NOT FAIL, and a mutation proved it: with the
+    original still present, the original wins the slot again, so a copy that
+    WAS measured never got the chance to become `_rt_rt`. Here the originals
+    are gone and the copy is the only subtitle left — measured, it would win
+    and be written again."""
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+    library = tmp_path / "library"
+    library.mkdir()
+    _, good, thin = _two_candidates(library)
+    trash = str(tmp_path / "trash")
+    PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+              trash_root=trash, results=False)
+    os.remove(good)
+    os.remove(thin)
+
+    again = PIPE.sync(API.scan(str(library)), write=True, suffix=u"_rt",
+                      trash_root=trash, results=False)
+
+    assert not [p for p in os.listdir(str(library)) if u"_rt_rt" in p], \
+        os.listdir(str(library))
+    assert len(again.unpaired) == 1, again.unpaired
+    assert u"retimed copy" in again.unpaired[0][1], again.unpaired

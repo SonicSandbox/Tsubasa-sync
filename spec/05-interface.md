@@ -380,6 +380,19 @@ somewhere-else cannot both hold.
 
 Writes every candidate as `<video>.<lang>.<tag>.<ext>` and **trashes nothing.**
 
+### `--suffix TEXT` · `sync(..., suffix=)` — ADDED 0.1.2 (2026-09-16)
+
+Writes a retimed **copy** beside the original and changes nothing else: no rename, no
+dedupe, nothing trashed. `--suffix _rt` → `Show - 01_rt.ja.srt`.
+
+| Ruled | Why |
+| --- | --- |
+| The suffix goes **before** the language token, after the stem | At the end, `Show - 01.ja_rt.srt` reads `und` — to tsubasa, which would redo it every run, and to media players. The `--keep-all` trap above, avoided |
+| A copy is **never measured** on a later run | It sits beside its original and parses as the same episode, so it would be written again as `_rt_rt` |
+| The results store is **shown** the copies; a suffix run is stable when every original it weighed survived | Otherwise the store could never call a suffixed folder settled, and every re-run refused its own write |
+| Refused with `rename=False`, `out_dir` or `keep_all` | Each is a contradictory write mode |
+| 1–32 characters; no path separators, `.`, `:*?"<>\|`, control characters or surrounding space | It becomes part of a filename on every OS |
+
 ### ⭐ Language must be a STRUCTURED FIELD at launch — the filter ships later
 
 **Ruled 2026-09-07.** Per-language syncing (`--lang ja`) is an **evolution** feature, but
@@ -426,6 +439,11 @@ output name should preserve what the user's other tooling expects.
 
 ⭐ OS-native trash via `send2trash` (MIT), falling back to a local `.tsubasa-trash/`
 where the OS has none — network shares, some Linux configurations.
+
+⭐ **And where the system trash REFUSES a file** (added 0.1.2): a file Windows has locked, a
+share with no recycle bin. The file goes to `.tsubasa-trash/` instead and the report says so.
+If the refusal happened after the file had already left its path, nothing is claimed
+(`performed=False`) — the tool will not report a move it cannot see.
 
 **Recoverable in the way the user already knows.** Nothing this tool does may be
 unrecoverable.

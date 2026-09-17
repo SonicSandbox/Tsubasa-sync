@@ -103,7 +103,8 @@ RESULTS_VERSION = 2
 RESULTS_DIR = u"synced"
 
 
-def run_shape(rename=True, out_dir=None, keep_all=False, dedupe=True):
+def run_shape(rename=True, out_dir=None, keep_all=False, dedupe=True,
+              suffix=None):
     u"""What a run was asked to PRODUCE. -> a comparable dict
 
     ⭐ Built in one place and called from both ends — the run that records and
@@ -114,7 +115,7 @@ def run_shape(rename=True, out_dir=None, keep_all=False, dedupe=True):
     can never be the shape of a record. ⚠ `force` too — it is
     explicit-pairs-only and the explicit path never skips.
     """
-    return {
+    shape = {
         u"rename": bool(rename),
         # ⚠ NORMALISED. The same directory typed two ways is one destination,
         # and a run refusing to skip because the user wrote a trailing slash
@@ -124,6 +125,13 @@ def run_shape(rename=True, out_dir=None, keep_all=False, dedupe=True):
         u"keep_all": bool(keep_all),
         u"dedupe": bool(dedupe),
     }
+    # ⭐ 0.1.2. A suffixed copy is a different product from an in-place retime,
+    # which is what the rename/dedupe keys alone would call it. ⚠ ADDED ONLY
+    # WHEN SET, so every record written before 0.1.2 still compares equal and
+    # a settled library does not re-measure itself after the upgrade.
+    if suffix:
+        shape[u"suffix"] = suffix
+    return shape
 
 
 def _same_file(path):
@@ -353,6 +361,18 @@ class Record(object):
         # a hand-back sentence naming no file at all.
         if not self.output_digest:
             return False
+        # ⭐ 0.1.2 — A SUFFIXED COPY IS A FIXED POINT THE MOMENT IT LANDS.
+        # The argument above is about a run that writes the CANONICAL name and
+        # leaves a stale original for the next run to trash. A suffix run
+        # does neither: its output is a copy that is never an input by design
+        # (`pipeline._sync_scan` keeps copies out of measurement), and it
+        # supersedes nothing (`sync` sets `dedupe=False`). So the copy can
+        # never appear in `offered()`, and demanding it there made every
+        # suffixed folder unsettleable — re-measured, then refused, every run.
+        # ⚠ What is still required: every original the run considered is
+        # still there. That is what *nothing was touched* means for a record.
+        if (self.shape or {}).get(u"suffix"):
+            return _within(self.survivors(), self.offered())
         return _within(self.expected(), self.offered())
 
     # -- serialisation ---------------------------------------------------

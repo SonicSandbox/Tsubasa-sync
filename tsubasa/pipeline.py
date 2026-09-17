@@ -243,7 +243,7 @@ class SyncReport(object):
 
 def sync(source, write=False, rename=True, dedupe=True, vad=False,
          force=False, keep_all=False, out_dir=None, trash_root=None,
-         sender=None, reader=None, results=None):
+         sender=None, reader=None, results=None, suffix=None):
     u"""Measure, decide, and -- only when told -- write. -> `SyncReport`
 
         sync(scan(...))                       measures. ⛔ Writes NOTHING.
@@ -284,6 +284,15 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
         of a container read and an alignment per pair -- `06-edge-cases.md` §7.
         ⛔ Pass `results=False` to consult and record nothing; that is not the
         same as `None`, which means *use the real per-user store*.
+    `suffix`
+        ⭐ 0.1.2. Write the retimed subtitle BESIDE ITS ORIGINAL, under the
+        original's name with this inserted before the language tag —
+        `suffix="_rt"` turns `Show - 01.ja.srt` into `Show - 01_rt.ja.srt`.
+        ⛔ **Nothing is replaced, renamed or trashed**: every original stays
+        exactly where it was, so this implies `dedupe=False`. On a scan, a
+        subtitle that is already such a copy is never retimed again. It
+        contradicts `rename=False` (in place), `out_dir` (elsewhere) and
+        `keep_all` (every candidate), and raises with any of them.
     """
     reader = reader or _default_reader
     trash_root = trash_root or _default_trash_root()
@@ -312,6 +321,25 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
             "the user left it -- and out_dir means the output goes somewhere "
             "else. Choose one (05-interface.md).")
 
+    if suffix is not None:
+        suffix = _sidecar.check_suffix(suffix)
+        for clash, why in ((rename is False, "rename=False retimes the "
+                            "original IN PLACE"),
+                           (bool(out_dir), "out_dir writes the output "
+                            "somewhere else"),
+                           (bool(keep_all), "keep_all writes every "
+                            "candidate under a distinguishing tag")):
+            if clash:
+                raise ValueError(
+                    "suffix writes a copy beside the original and changes "
+                    "nothing else, but %s. Choose one." % why)
+        # ⭐ The copy lives in the ORIGINAL's folder, which is exactly where
+        # `rename=False` already puts a write — so the directory and every
+        # ownership check are reused rather than re-derived. The NAME is what
+        # differs, and `_decide_slot` applies it. `dedupe=False` because
+        # superseding an original is the one thing this mode promises not to do.
+        rename, dedupe = False, False
+
     if isinstance(source, _api.Scan):
         if force:
             # ⛔ REFUSED LOUDLY, never ignored. On the discovery path forcing
@@ -328,14 +356,16 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
         return _sync_scan(source, write=write, rename=rename, dedupe=dedupe,
                           keep_all=keep_all, out_dir=out_dir,
                           trash_root=trash_root, sender=sender, reader=reader,
-                          vad=vad, notes=notes, results=results)
+                          vad=vad, notes=notes, results=results,
+                          suffix=suffix)
 
     plan = source if isinstance(source, _explicit.PairPlan) else \
         _explicit.explicit_pairs(pair_args=source)
     return _sync_plan(plan, write=write, rename=rename, dedupe=dedupe,
                       keep_all=keep_all, out_dir=out_dir,
                       trash_root=trash_root, sender=sender, reader=reader,
-                      force=force, vad=vad, notes=notes, results=results)
+                      force=force, vad=vad, notes=notes, results=results,
+                      suffix=suffix)
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +1014,7 @@ def judge(measured, clusters):
 # ---------------------------------------------------------------------------
 
 def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
-               sender, reader, vad, notes, results=None):
+               sender, reader, vad, notes, results=None, suffix=None):
     u"""Measure and decide a whole discovery. -> `SyncReport`
 
     ⭐ TWO PASSES, and the reason is the cluster. Every pair is measured first
@@ -1035,7 +1065,7 @@ def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
     # the skip that reads a record and the record this run writes. Two
     # descriptions of one thing drift, and the drift reads as *already in sync*.
     shape = _results.run_shape(rename=rename, out_dir=out_dir,
-                               keep_all=keep_all, dedupe=dedupe)
+                               keep_all=keep_all, dedupe=dedupe, suffix=suffix)
     #: {video: {subtitle path: ContentKey}} as of BEFORE anything moved.
     #: ⭐ The skip check has already hashed every candidate; the recording
     #: half needs exactly that set and cannot recompute it afterwards, because
@@ -1072,13 +1102,38 @@ def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
         # the one made with runtimes.
         ranked = scan.rank(video, offered)
 
+        # ⭐ A COPY IS NEVER RETIMED AGAIN. With a suffix, the previous run's
+        # `Show - 01_rt.ja.srt` sits beside its original and is offered for
+        # the same episode; measuring it would write `Show - 01_rt_rt.ja.srt`.
+        # ⚠ Removed BEFORE the skip check below, so what the store records as
+        # this video's candidates is the same set a re-run asks about.
+        copies = []
+        if suffix:
+            copies = [c for c in ranked
+                      if _sidecar.is_suffixed(c.subtitle.name, suffix)]
+            ranked = [c for c in ranked
+                      if not _sidecar.is_suffixed(c.subtitle.name, suffix)]
+            if not ranked:
+                unpaired.append((
+                    video.path,
+                    u"every subtitle offered for it is itself a retimed copy "
+                    u"(its name ends in %s), and a copy is never retimed "
+                    u"again" % suffix))
+                continue
+
         # ⭐ 3a-bis: THE HASH-AND-SKIP READ, AND IT IS HERE FOR THE COST, NOT
         # FOR TIDINESS. One line further down is `_reference_cached`, which
         # opens the container. Everything this decision saves is saved by
         # being asked before that call.
         if results is not None:
+            # ⭐ THE COPIES ARE SHOWN TO THE STORE, NEVER TO THE ALIGNER. The
+            # store recognises a finished video by finding its recorded OUTPUT
+            # among the files on offer — and a suffix run's output is exactly
+            # the copy measurement leaves out. Without it here, a suffixed
+            # folder was re-measured on every run and then refused its own
+            # write, because the copy it had made was in the way.
             state = _results.settled(results, video.path,
-                                     [c.subtitle.path for c in ranked],
+                                     [c.subtitle.path for c in ranked + copies],
                                      shape=shape, hashes=hashes)
             video_keys[video.path] = state.video_key
             before[video.path] = state.digests
@@ -1131,7 +1186,8 @@ def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
     for video in scan.videos:
         slots.extend(_decide_video(video.path, by_video.get(video.path, ()),
                                    rename=rename, dedupe=dedupe,
-                                   keep_all=keep_all, explicit=False))
+                                   keep_all=keep_all, explicit=False,
+                                   suffix=suffix))
     mirror = _mirror_root([v.path for v in scan.videos])
     _resolve_ownership(slots, out_dir=out_dir, mirror_root=mirror,
                        rename=rename, protected=protected, answers=answers)
@@ -1198,7 +1254,7 @@ def _durations_for(scan, references, reader):
 # ---------------------------------------------------------------------------
 
 def _sync_plan(plan, write, rename, dedupe, keep_all, out_dir, trash_root,
-               sender, reader, force, vad, notes, results=None):
+               sender, reader, force, vad, notes, results=None, suffix=None):
     u"""Measure and decide a `PairPlan`. -> `SyncReport`
 
     🚨 EVERY REFUSAL THE PLAN CARRIES BECOMES A RESULT. That is the whole
@@ -1262,7 +1318,8 @@ def _sync_plan(plan, write, rename, dedupe, keep_all, out_dir, trash_root,
     for video_path in _ordered(m.video for m in measured):
         slots.extend(_decide_video(video_path, by_video[video_path],
                                    rename=rename, dedupe=dedupe,
-                                   keep_all=keep_all, explicit=True))
+                                   keep_all=keep_all, explicit=True,
+                                   suffix=suffix))
     mirror = _mirror_root([m.video for m in measured])
     _resolve_ownership(slots, out_dir=out_dir, mirror_root=mirror,
                        rename=rename)
@@ -1291,7 +1348,7 @@ def _sync_plan(plan, write, rename, dedupe, keep_all, out_dir, trash_root,
                      before.get(slot.video, {}),
                      shape=_results.run_shape(rename=rename, out_dir=out_dir,
                                               keep_all=keep_all,
-                                              dedupe=dedupe))
+                                              dedupe=dedupe, suffix=suffix))
         out.extend(done)
 
     if vad:
@@ -1649,7 +1706,8 @@ def _key(path):
     return os.path.normcase(os.path.realpath(str(path)))
 
 
-def _decide_video(video_path, measured, rename, dedupe, keep_all, explicit):
+def _decide_video(video_path, measured, rename, dedupe, keep_all, explicit,
+                  suffix=None):
     u"""Every slot this video has, PLANNED. ⛔ Performs nothing."""
     measured = list(measured)
     if not measured:
@@ -1662,12 +1720,13 @@ def _decide_video(video_path, measured, rename, dedupe, keep_all, explicit):
     for lang in _ordered(m.sidecar.lang for m in measured):
         out.append(_decide_slot(video_path, video_stem, lang, groups[lang],
                                 rename=rename, dedupe=dedupe,
-                                keep_all=keep_all, explicit=explicit))
+                                keep_all=keep_all, explicit=explicit,
+                                suffix=suffix))
     return out
 
 
 def _decide_slot(video_path, video_stem, lang, group, rename, dedupe,
-                 keep_all, explicit):
+                 keep_all, explicit, suffix=None):
     u"""One (video x language) slot, PLANNED. -> `_Slot`
 
     ⛔ `dedupe.plan()` DECIDES. This function never picks a winner and never
@@ -1746,7 +1805,15 @@ def _decide_slot(video_path, video_stem, lang, group, rename, dedupe,
                    u"is" if len(superseded) == 1 else u"are"))
         superseded = []
 
-    if rename is False:
+    if suffix:
+        # ⭐ A COPY BESIDE THE ORIGINAL, named after the original. `sync()` has
+        # already set `rename=False`, so the folder is the original's; only the
+        # NAME differs from an in-place retime, which makes the target a new
+        # file — `apply_plan`'s occupied-target check refuses to write over
+        # anything already there that this run did not produce.
+        writes = [(c, _sidecar.suffixed_name(os.path.basename(c.path), suffix))
+                  for c, _n in writes]
+    elif rename is False:
         # ⚠ `--rename` off writes back over the subtitle's OWN name, so the
         # namer is bypassed rather than reimplemented. `apply_plan` then sees
         # a target identical to the source, which it already handles as an

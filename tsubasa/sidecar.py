@@ -602,9 +602,56 @@ def has_trailing_junk(name):
     return bool(_TRAILING.search(name))
 
 
+#: Characters a suffix may not contain: a path separator would write
+#: somewhere else, a DOT would become a token the language reader parses, and
+#: the rest are refused by Windows.
+_SUFFIX_FORBIDDEN = frozenset(u"./\\:*?\"<>|")
+
+
+def check_suffix(suffix):
+    u"""A suffix a caller asked for, or a `ValueError` saying why not. -> str"""
+    text = u"%s" % (suffix,)
+    bad = sorted(set(c for c in text
+                     if c in _SUFFIX_FORBIDDEN or ord(c) < 32))
+    if not text or text != text.strip() or bad or len(text) > 32:
+        raise ValueError(
+            u"%r cannot be a suffix: it must be 1 to 32 characters with no "
+            u"leading or trailing space and none of %s. A dot would be read "
+            u"as a language or flag tag; a separator would write somewhere "
+            u"else. Something like _rt works."
+            % (suffix, u" ".join(sorted(_SUFFIX_FORBIDDEN))))
+    return text
+
+
+def suffixed_name(name, suffix):
+    u"""`Show - 01.ja[cc].srt` + `_rt` -> `Show - 01_rt.ja[cc].srt`. -> str
+
+    🚨 THE SUFFIX GOES BEFORE THE LANGUAGE, NEVER AT THE VERY END. The same
+    trap `output_name`'s `--keep-all` tag fell into: `Show - 01.ja_rt.srt`
+    makes `ja_rt` a token this reader does not know, so the file reads `und`
+    — to tsubasa, which would then redo it every run, and to every media
+    player, which reads the same `.ja.` convention. Inserted after the stem,
+    the whole name round-trips and still says Japanese.
+    """
+    stem = parse(name).stem
+    if stem and name.startswith(stem):
+        return stem + suffix + name[len(stem):]
+    root, ext = os.path.splitext(name)
+    return root + suffix + ext
+
+
+def is_suffixed(name, suffix):
+    u"""Is this name already a copy written with `suffix`? -> bool
+
+    ⭐ What stops a re-run retiming its own copies into `_rt_rt`.
+    """
+    return parse(name).stem.endswith(suffix)
+
+
 __all__ = [
     "ISO_639_1", "LANGUAGE_TOKENS", "FLAG_TOKENS", "UNAMBIGUOUS_FLAGS",
     "CONTEXTUAL_FLAGS", "UND", "NAME_MAX",
     "Sidecar", "NameTooLong",
     "parse", "parse_path", "output_name", "is_reserved", "has_trailing_junk",
+    "check_suffix", "suffixed_name", "is_suffixed",
 ]

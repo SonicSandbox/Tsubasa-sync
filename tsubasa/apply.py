@@ -218,12 +218,20 @@ def apply_plan(plan, trash_root, out_dir=None, dry_run=True, sender=None,
                     moved = _dedupe.trash(doomed[0].path, trash_root,
                                           dry_run=dry_run, sender=sender)
                     report.trashed.append(moved)
-                    report.notes.append(
-                        u"%s was moved to the trash before %s was written over "
-                        u"it -- they are different files and the write would "
-                        u"have destroyed it"
-                        % (os.path.basename(doomed[0].path),
-                           os.path.basename(candidate.path)))
+                    # ⚠ Only a move that HAPPENED is described as one. Since
+                    # 0.1.2 `trash()` can return performed=False having raised
+                    # nothing — the system trash refused and the file had
+                    # already left its path — and this note used to be added
+                    # regardless.
+                    if moved.performed or dry_run:
+                        report.notes.append(
+                            u"%s was moved to the trash before %s was written "
+                            u"over it -- they are different files and the "
+                            u"write would have destroyed it"
+                            % (os.path.basename(doomed[0].path),
+                               os.path.basename(candidate.path)))
+                    if moved.reason and not dry_run:
+                        report.notes.append(moved.reason)
                 except Exception as exc:
                     # ⛔ AND IF THE TRASH FAILS, NOTHING IS WRITTEN. Writing now
                     # would destroy the file we have just failed to make
@@ -310,9 +318,13 @@ def apply_plan(plan, trash_root, out_dir=None, dry_run=True, sender=None,
         # were never attempted. An outbound side effect must never be able to
         # fail the operation that caused it (`doctrine/robustness`).
         try:
-            report.trashed.append(
-                _dedupe.trash(loser.path, trash_root, dry_run=dry_run,
-                              sender=sender))
+            gone = _dedupe.trash(loser.path, trash_root, dry_run=dry_run,
+                                 sender=sender)
+            report.trashed.append(gone)
+            # ⭐ A fallback is said out loud: which trash a file went to is
+            # where the user will look for it.
+            if gone.reason and not dry_run:
+                report.notes.append(gone.reason)
         except Exception as exc:
             # ⭐ `except Exception` is correct here and the reason is at the
             # site: the sender is third-party and may raise anything. The file

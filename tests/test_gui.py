@@ -174,6 +174,69 @@ def ndjson(*records):
                     for r in records)
 
 
+#: Starts a Tk root gets when Tk fails to READ ITS OWN library. See `_tk_root`.
+TK_START_ATTEMPTS = 4
+
+
+def _tk_root():
+    u"""A real Tk root — or a skip that tells the truth, or a failure. -> Tk
+
+    ===================================================================
+    🚨 IT SKIPPED AS "no display" ON A MACHINE THAT HAS ONE
+    ===================================================================
+
+    Every site that made a root caught ANY `TclError` and skipped with
+    *"no display"*. On Windows there is always a display, and about one run of
+    this file in seven skipped a test anyway — a different test each time.
+    The whole message, captured instead of its first line:
+
+        Can't find a usable tk.tcl in the following directories: ...
+        couldn't read file "C:/Python310/tcl/tk8.6/ttk/spinbox.tcl":
+        no such file or directory
+
+    ⛔ THE FILE EXISTS. Tk's startup sources about thirty of its own `.tcl`
+    files, and one open intermittently comes back ENOENT — `init.tcl` one
+    time, `ttk/spinbox.tcl` another.
+
+    ⭐ INVESTIGATED 2026-09-16 AND NOT REPRODUCED OUTSIDE THIS FILE: 600 bare
+    roots, 600 with a thread churning temp files, 600 with a CPU-bound thread,
+    150 real `App` windows, and 400 roots inside pytest with output capture
+    on and 400 with it off — 2,750 startups, zero failures, against about one
+    in 350 here. Windows Defender's real-time scanning is on, and the next
+    root in the same process always starts. So it is transient and
+    environmental rather than tsubasa's, and a user's app makes exactly one
+    root per launch.
+
+    So a transient library-read failure is RETRIED, and says so with a
+    warning when it had to be. Nothing else is dressed up as a skip: a
+    missing display skips, and every other failure to start Tk FAILS with
+    Tcl's own message.
+    """
+    import warnings
+    tk = pytest.importorskip(u"tkinter")
+    message = u""
+    for attempt in range(1, TK_START_ATTEMPTS + 1):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            message = u"%s" % exc
+            if u"Can't find a usable" in message and \
+                    u"couldn't read file" in message:
+                time.sleep(0.05 * attempt)
+                continue
+            break
+        if attempt > 1:
+            warnings.warn(u"Tk started on attempt %d, after a transient "
+                          u"failure to read its own library: %s"
+                          % (attempt, [l for l in message.splitlines()
+                                       if u"couldn't read file" in l][:1]))
+        return root
+    if u"display" in message.lower():
+        pytest.skip(u"no display: %s" % message.splitlines()[0])
+    pytest.fail(u"Tk could not start (%d attempt%s):\n%s"
+                % (attempt, u"" if attempt == 1 else u"s", message))
+
+
 # ===========================================================================
 # CONSTRAINT 4 -- what the glance line claims
 # ===========================================================================
@@ -932,11 +995,7 @@ def test_FakeRoot_still_describes_THIS_machine():
     constant to what the machine actually reports, so the day the display
     changed both would stay green and diverge.
     """
-    tk = pytest.importorskip(u"tkinter")
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:                            # pragma: no cover
-        pytest.skip(u"no display: %s" % exc)
+    root = _tk_root()
     try:
         real = SCALE.Scale(root)
         if abs(real.dpi - BUILD_DPI) > 0.5:
@@ -958,11 +1017,7 @@ def test_the_chrome_FORMULA_agrees_with_a_MEASURED_window():
     u"""⭐ `doctrine/architecture`: *fit by MEASURING, never by calculating.*
     `window_chrome()` is the cheap formula; this is the instrument that
     disagrees with it when it is wrong."""
-    tk = pytest.importorskip(u"tkinter")
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:                            # pragma: no cover
-        pytest.skip(u"no display: %s" % exc)
+    root = _tk_root()
     try:
         root.geometry(u"400x300+120+120")
         root.update_idletasks()
@@ -1203,11 +1258,7 @@ def _app(tmp_path, **values):
     the process under it is a double, so everything from `argv_for` through
     the parse to the counts is the shipped path.
     """
-    tk = pytest.importorskip(u"tkinter")
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:                            # pragma: no cover
-        pytest.skip(u"no display: %s" % exc)
+    root = _tk_root()
     from tsubasa.gui import app as APP
     s = SETTINGS.Settings(dict(values), str(tmp_path / u"s.json"))
     stdout = ndjson(a_record(u"REFUSED"), a_record(), a_record(),

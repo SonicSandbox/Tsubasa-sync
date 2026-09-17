@@ -779,15 +779,48 @@ def test_a_DIRECTORY_at_the_target_is_caught_before_the_write(tmp_path):
     assert "already exists" in report.errors[0][1]
 
 
+def test_a_REFUSING_system_trash_still_completes_the_run_through_the_local_one(
+        tmp_path):
+    u"""⭐ 0.1.2. `send2trash` raises `OSError(32)` on a file Windows has
+    locked. Before 0.1.2 that was recorded as an error and the loser was LEFT
+    beside the winner — safe, and half-done. It now goes to the local trash,
+    and the report says which trash it went to."""
+    winner = tmp_path / "Show - 01.ja.srt"
+    loser = tmp_path / "[Other] Show - 01.ja.srt"
+    write_srt(str(winner), [(10, 12, u"a"), (20, 22, u"b")])
+    write_srt(str(loser), [(10, 12, u"c")])
+    trash_root = tmp_path / D.TRASH_DIR
+
+    def locked(_path):
+        raise OSError(32, "The process cannot access the file")
+
+    report = A.apply_plan(
+        D.plan(u"Show - 01", [a_candidate(str(winner), cues=2),
+                              a_candidate(str(loser), cues=1)]),
+        str(trash_root), dry_run=False, sender=locked)
+
+    assert report.written, u"the write was lost"
+    assert not report.errors, report.errors
+    assert not loser.exists(), u"the superseded file was left beside the winner"
+    assert (trash_root / loser.name).exists(), u"and it is not in the local trash"
+    assert any(u"refused" in n and u"instead" in n for n in report.notes), \
+        report.notes
+
+
 def test_a_TRASH_failure_is_recorded_and_does_not_lose_the_write(tmp_path):
-    u"""⚠ `send2trash` raises `OSError(32)` on a file Windows has locked, and
-    that escaped AFTER a successful write — throwing away the report that
-    recorded it. `doctrine/robustness`: an outbound side effect must never fail
+    u"""⚠ THE ORIGINAL GUARANTEE, NOW WHERE IT STILL APPLIES: when the system
+    trash refuses AND the local fallback cannot be made either. `send2trash`
+    once raised `OSError(32)` AFTER a successful write and threw away the report
+    recording it. `doctrine/robustness`: an outbound side effect must never fail
     the operation that caused it."""
     winner = tmp_path / "Show - 01.ja.srt"
     loser = tmp_path / "[Other] Show - 01.ja.srt"
     write_srt(str(winner), [(10, 12, u"a"), (20, 22, u"b")])
     write_srt(str(loser), [(10, 12, u"c")])
+    # ⚠ A FILE where the trash directory should go, so the fallback's
+    # `makedirs` fails as well — the one case left with nowhere to put it.
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text(u"x", encoding="utf-8")
 
     def explode(_path):
         raise OSError(32, "The process cannot access the file")
@@ -795,7 +828,7 @@ def test_a_TRASH_failure_is_recorded_and_does_not_lose_the_write(tmp_path):
     report = A.apply_plan(
         D.plan(u"Show - 01", [a_candidate(str(winner), cues=2),
                               a_candidate(str(loser), cues=1)]),
-        str(tmp_path / D.TRASH_DIR), dry_run=False, sender=explode)
+        str(blocked / D.TRASH_DIR), dry_run=False, sender=explode)
     assert report.written, "the successful write was lost with the exception"
     assert report.errors and "still where it was" in report.errors[0][1]
     assert loser.exists()

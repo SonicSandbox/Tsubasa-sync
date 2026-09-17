@@ -626,6 +626,35 @@ def test_a_CONTRADICTORY_pair_of_flags_exits_2_with_the_librarys_sentence(
     assert u"Traceback" not in err.text
 
 
+def test_suffix_writes_a_retimed_copy_beside_the_original_from_the_CLI(
+        tmp_path, out, err, monkeypatch):
+    u"""⭐ 0.1.2: `--suffix _rt`, end to end through the command a person types.
+    The original stays byte-identical and the copy keeps its language tag."""
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+    monkeypatch.setenv("TSUBASA_CACHE", str(tmp_path / "store"))
+    folder = tmp_path / "Show S01"
+    _video, sub = one_episode(folder)
+    original = open(sub, "rb").read()
+
+    code = CLI.main([str(folder), u"--suffix", u"_rt"], out=out, err=err)
+
+    assert code == 0, (out.text, err.text)
+    copy = os.path.join(str(folder), u"[Grp] Show S01E01_rt.ja.srt")
+    assert os.path.isfile(copy), os.listdir(str(folder))
+    assert open(sub, "rb").read() == original
+
+
+def test_suffix_with_no_rename_exits_2_and_says_why(tmp_path, out, err,
+                                                     monkeypatch):
+    monkeypatch.setenv("TSUBASA_CACHE", str(tmp_path / "store"))
+    folder = tmp_path / "Show S01"
+    one_episode(folder)
+    code = CLI.main([str(folder), u"--suffix", u"_rt", u"--no-rename"],
+                    out=out, err=err)
+    assert code == 2
+    assert u"suffix" in err.text and u"Traceback" not in err.text, err.text
+
+
 def test_force_on_a_SCAN_exits_2_rather_than_silently_ignoring_it(
         tmp_path, out, err, monkeypatch):
     monkeypatch.setenv("TSUBASA_CACHE", str(tmp_path / "store"))
@@ -652,9 +681,15 @@ def test_help_prints_the_usage_and_exits_0(out, err):
     assert u"tsubasa <folder>" in out.text
     # ⚠ Every flag the parser accepts is in the help. A flag nobody can find is
     # a flag that does not exist.
-    for flag in (u"--subs", u"--out", u"--no-recurse", u"--no-rename",
-                 u"--keep-all", u"--pair", u"--pairs", u"--force",
-                 u"--dry-run", u"--json", u"--verbose", u"--no-results"):
+    # ⭐ READ FROM THE PARSER'S SOURCE, not listed here. The list this replaced
+    # was typed by hand, so the claim above held only until someone added a
+    # flag and not the list — which is exactly what `--suffix` would have done.
+    import inspect
+    import re
+    accepted = set(re.findall(r'arg == u"(--[a-z-]+)"',
+                              inspect.getsource(CLI.parse)))
+    assert len(accepted) >= 12, sorted(accepted)
+    for flag in sorted(accepted):
         assert flag in out.text, flag
 
 

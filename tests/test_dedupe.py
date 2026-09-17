@@ -187,6 +187,51 @@ def test_the_OS_trash_is_used_when_the_machine_has_one(tmp_path):
     assert result.method == u"os" and result.performed
 
 
+def test_a_REFUSING_system_trash_falls_back_to_the_local_one(tmp_path):
+    u"""⭐ 0.1.2. A locked file, a network share, a drive with no recycle bin:
+    the system trash refuses real files. It used to let the exception out, and
+    the run stopped half-done — nothing lost, but a superseded subtitle left
+    beside its replacement. The local trash is exactly as recoverable, and it
+    exists for when the system trash is not there."""
+    victim = tmp_path / "Show.ja.srt"
+    victim.write_text(u"payload", encoding="utf-8")
+    root = tmp_path / D.TRASH_DIR
+
+    def refuse(path):
+        raise OSError(5, "Access is denied")
+
+    result = D.trash(str(victim), str(root), dry_run=False, sender=refuse)
+
+    assert (result.method, result.performed) == (u"local", True), result
+    assert not victim.exists()
+    landed = root / "Show.ja.srt"
+    assert landed.read_text(encoding="utf-8") == u"payload", \
+        u"the bytes must survive the fallback unchanged"
+    assert u"refused" in result.reason and str(root) in result.reason, \
+        u"the fallback must say where the file went: %r" % result.reason
+
+
+def test_a_refusal_after_the_file_LEFT_its_path_claims_nothing(tmp_path):
+    u"""⚠ The system trash raised AND the file is gone from its path. Where it
+    went is not ours to know, so nothing more is moved and nothing is claimed:
+    performed=False, with the reason in words."""
+    victim = tmp_path / "Show.ja.srt"
+    victim.write_text(u"payload", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere.srt"
+    root = tmp_path / D.TRASH_DIR
+
+    def move_then_raise(path):
+        os.rename(path, str(elsewhere))
+        raise OSError(5, "Access is denied")
+
+    result = D.trash(str(victim), str(root), dry_run=False,
+                     sender=move_then_raise)
+
+    assert (result.method, result.performed) == (u"os", False), result
+    assert u"no longer at its path" in result.reason
+    assert not root.exists(), u"a file that is not there was 'moved' anyway"
+
+
 def test_the_environment_switch_forces_the_local_path(tmp_path, monkeypatch):
     u"""The same shape as `TSUBASA_NO_NATIVE_DEMUX=1` for the container
     reader: a way to reach the fallback on a machine that has the fast path."""

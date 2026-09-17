@@ -60,6 +60,8 @@ Options
   --out DIR          write the results here instead, mirroring the library
   --no-recurse       do not descend into sub-folders
   --no-rename        retime in place; keep each file's own name
+  --suffix TEXT      write a retimed COPY beside each original, named after it:
+                     --suffix _rt gives Show - 01_rt.ja.srt. Changes nothing else
   --keep-all         write every candidate; supersede nothing
   --pair V S         an explicit pair. Repeatable
   --pairs FILE       a JSON manifest: [["video", "subtitle"], ...]
@@ -498,7 +500,8 @@ def parse(argv):
     """
     opts = {
         u"roots": [], u"subs": None, u"out": None, u"recurse": True,
-        u"rename": True, u"keep_all": False, u"pairs": [], u"force": False,
+        u"rename": True, u"suffix": None,
+        u"keep_all": False, u"pairs": [], u"force": False,
         u"dry_run": False, u"json": False, u"verbose": False,
         u"results": True, u"help": False,
     }
@@ -515,6 +518,8 @@ def parse(argv):
             opts[u"recurse"] = False
         elif arg == u"--no-rename":
             opts[u"rename"] = False
+        elif arg == u"--suffix":
+            opts[u"suffix"] = _value(rest, arg)
         elif arg == u"--keep-all":
             opts[u"keep_all"] = True
         elif arg == u"--force":
@@ -653,7 +658,8 @@ def _run(opts):
     write = WRITES_BY_DEFAULT and not opts[u"dry_run"]
     common = dict(write=write, rename=opts[u"rename"],
                   keep_all=opts[u"keep_all"], out_dir=opts[u"out"],
-                  results=None if opts[u"results"] else False)
+                  results=None if opts[u"results"] else False,
+                  suffix=opts[u"suffix"])
 
     if opts[u"pairs"]:
         return None, _pipeline.sync(opts[u"pairs"], force=opts[u"force"],

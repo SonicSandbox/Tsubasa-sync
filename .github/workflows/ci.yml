@@ -35,9 +35,9 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 
@@ -236,7 +236,7 @@ jobs:
       # to learn a name the first run already had.
       - name: Keep the run log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: run-log-${{ matrix.os }}-py${{ matrix.python }}
           path: _runs/
@@ -262,8 +262,8 @@ jobs:
     name: wheel contains its data
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -376,8 +376,8 @@ jobs:
     name: a frozen app carries the data
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -430,7 +430,7 @@ jobs:
     name: licence is the real text
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: LICENSE must be the canonical GPL-3.0
         run: |
           set -euo pipefail

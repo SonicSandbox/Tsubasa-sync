@@ -56,6 +56,7 @@ Folders are searched recursively. Anything that is not a video or a subtitle is 
 | `--subs DIR` | where the subtitles are, when they are not beside the videos |
 | `--out DIR` | write the results there instead, mirroring the library's folders |
 | `--no-rename` | retime in place, keeping each file's own name |
+| `--suffix TEXT` | write a retimed **copy** beside each original, named after it — `--suffix _rt` gives `Show - 01_rt.ja.srt`. Nothing else is changed or trashed |
 | `--keep-all` | write every candidate; supersede nothing |
 | `--no-recurse` | do not descend into sub-folders |
 | `--pair V S` | an explicit pair. Repeatable |
@@ -147,9 +148,15 @@ Choose what writing does:
 | `sync(scan, write=True, dedupe=False)` | **all left exactly where they are** | beside the video, named after it |
 | `sync(scan, write=True, out_dir="/elsewhere")` | untouched | under `/elsewhere`, mirroring the library |
 | `sync(scan, write=True, rename=False)` | the subtitle is **retimed in place** | — |
+| `sync(scan, write=True, suffix="_rt")` | **all left exactly where they are** | beside each **original**, named after it: `Show - 01_rt.ja.srt` |
 
 The output is named `<video name>.<language>.<ext>` — the form media players load
 automatically — and keeps the subtitle's original format and text encoding.
+
+**With a suffix**, the suffix goes *before* the language tag, so the copy still reads as
+Japanese to tsubasa and to media players. A copy is never retimed again on a later run, and it
+cannot be combined with `rename=False`, `out_dir` or `keep_all` — each would mean something
+other than *a copy beside the original*, so each raises `ValueError`.
 
 **Explicit pairs** skip the name-matching and go straight to timing:
 
@@ -266,9 +273,12 @@ tsubasa.parse_subtitle_name("Show - 01.ja[cc].srt")
 | | Default | To turn it off |
 | --- | --- | --- |
 | **A record of what was synced**, so a settled folder re-runs in a fraction of a second | kept in a per-user store | `sync(..., results=False)` |
-| **Superseded subtitles** | the OS trash with `[trash]` installed; otherwise `.tsubasa-trash/` in tsubasa's per-user cache directory — never beside your media | `sync(..., dedupe=False)` keeps them all in place; `trash_root=` chooses the folder |
+| **Superseded subtitles** | the OS trash with `[trash]` installed; otherwise `.tsubasa-trash/` in tsubasa's per-user cache directory — never beside your media | `sync(..., dedupe=False)` or `suffix=` keeps them all in place; `trash_root=` chooses the folder |
 
 Nothing is ever deleted outright. `scan()` leaves nothing behind at all.
+
+If the OS trash **refuses** a file — one Windows has locked, one on a network drive with no
+recycle bin — it goes to the local `.tsubasa-trash/` instead, and the result's `notes` say where.
 
 ---
 

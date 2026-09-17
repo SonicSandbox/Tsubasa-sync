@@ -484,13 +484,44 @@ def trash(path, trash_root, dry_run=True, sender=None):
                          u"deletes it recursively, and nothing this tool does "
                          u"may be unrecoverable." % path)
 
+    refused = u""
     sender = sender if sender is not None else _os_trash()
     if sender is not None and not os.environ.get("TSUBASA_NO_OS_TRASH"):
         if dry_run:
             return TrashResult(path, method=u"os", performed=False,
                                reason=u"would go to the system trash")
-        sender(path)
-        return TrashResult(path, method=u"os", performed=True)
+        # =================================================================
+        # ⭐ A REFUSING SYSTEM TRASH FALLS BACK TO THE LOCAL ONE — 0.1.2
+        # =================================================================
+        # The system trash refuses real files: one Windows has locked
+        # (`OSError(32)`), one on a network share or a drive with no recycle
+        # bin, one in a sandbox. This let the exception out, and `apply.py`
+        # caught it at both call sites — so nothing crashed, but the operation
+        # stopped half-done: a superseded subtitle stayed beside its
+        # replacement, or a write was abandoned because the file in its way
+        # could not be moved. ⛔ The local `.tsubasa-trash/` is exactly as
+        # recoverable, and it exists for when the system trash is not there;
+        # refusing is that case arriving at runtime rather than at install.
+        #
+        # ⭐ `except Exception` is correct and the reason is at the site: the
+        # sender is third-party and may raise anything. What is caught is
+        # never swallowed — it rides out on `reason`, and `apply.py` puts it
+        # in front of the person.
+        try:
+            sender(path)
+        except Exception as exc:                    # noqa: BLE001 — reported
+            refused = u"the system trash refused %s (%s: %s)" % (
+                os.path.basename(path), type(exc).__name__, exc)
+            if not os.path.exists(path):
+                # ⚠ It raised AND the file left its path, so where it went is
+                # not ours to know. Nothing more is moved, and nothing is
+                # claimed: performed=False, and the sentence says why.
+                return TrashResult(
+                    path, method=u"os", performed=False,
+                    reason=u"%s, and the file is no longer at its path, so "
+                           u"nothing more was done" % refused)
+        else:
+            return TrashResult(path, method=u"os", performed=True)
 
     destination = _local_slot(path, trash_root)
     if dry_run:
@@ -500,7 +531,9 @@ def trash(path, trash_root, dry_run=True, sender=None):
     if not os.path.isdir(parent):
         os.makedirs(parent)
     shutil.move(path, destination)
-    return TrashResult(path, destination, u"local", True)
+    return TrashResult(path, destination, u"local", True,
+                       (u"%s, so it was moved to %s instead"
+                        % (refused, destination)) if refused else u"")
 
 
 def _os_trash():
