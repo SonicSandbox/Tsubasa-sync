@@ -329,6 +329,27 @@ def render(report, root=None, scan=None, elapsed=None, verbose=False):
         _blank(lines)
         lines.append(u"  %d subtitle%s superseded → trash"
                      % (moved, u"" if moved == 1 else u"s"))
+    else:
+        # 🚨 THE DRY RUN SAYS IT TOO, AND IT USED NOT TO.
+        # `Result.superseded` is *paths actually moved*, so on a dry run the
+        # count above is always 0 and this section simply did not print --
+        # `--dry-run` over a folder with two candidates for one slot reported
+        # *"7 would sync"*, and the identical real run reported *"1 subtitle
+        # superseded → trash"* and moved a file out of the library. The flag's
+        # own help is *"print every intended action"*, and the single
+        # irreversible one was the only one missing.
+        # ⭐ NAMED, not counted. The whole point of reading a dry run is to
+        # decide whether you agree with it, and *"1 subtitle"* is not something
+        # anyone can agree or disagree with.
+        would = [p for r in report for p in r.would_supersede]
+        if would:
+            _blank(lines)
+            lines.append(u"  %d subtitle%s would be superseded → trash"
+                         % (len(would), u"" if len(would) == 1 else u"s"))
+            for path in would:
+                lines.append(u"  %s%s" % (BODY,
+                                          _clip(os.path.basename(path),
+                                                NAME_CELLS)))
 
     _blank(lines)
     tail = report.summary()
@@ -469,6 +490,10 @@ def as_json(result):
         u"reference": result.reference,
         u"output_path": result.output_path,
         u"superseded": list(result.superseded),
+        # ⚠ Dry run only -- see `api.Result.would_supersede`. A consumer
+        # that reads `superseded` alone learns nothing about a dry run's one
+        # irreversible intention.
+        u"would_supersede": list(result.would_supersede),
         u"lang": result.lang,
         u"lang_tag": result.lang_tag,
         u"forced": result.forced,

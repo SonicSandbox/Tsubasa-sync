@@ -625,6 +625,101 @@ def test_a_DRY_RUN_reports_no_superseded_even_with_a_loser(tmp_path,
     assert os.path.exists(good) and os.path.exists(loser)
 
 
+def test_a_DRY_RUN_and_a_REAL_RUN_AGREE_ABOUT_WHAT_GOES_TO_THE_TRASH(
+        tmp_path, monkeypatch):
+    u"""🚨 THE CHECK ABOVE PINS THE CONTRACT AND LEFT THE GAP.
+
+    `superseded` is *paths actually moved*, so a dry run reporting `[]` is
+    correct -- and that made the mode whose entire job is to PREDICT the
+    destructive action structurally unable to mention it. Measured on a real
+    library: `--dry-run` printed *"7 would sync"* and the identical real run
+    printed *"1 subtitle superseded → trash"* and moved a subtitle out of the
+    folder. `--dry-run`'s own help is *"print every intended action; write and
+    trash nothing"*, and the one action that cannot be undone was the one it
+    did not print.
+
+    ⭐ SO THE PROPERTY IS AGREEMENT BETWEEN THE TWO RUNS, not the value of
+    either field. A check that asserted `would_supersede != []` would pass on a
+    dry run that predicted the wrong file.
+    """
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+
+    def _library(where):
+        where.mkdir()
+        _write_mkv(where / "Show S01E01.mkv", MKV_CUES, duration_s=RUNTIME,
+                   per_cluster=4)
+        _write(where / "[Erai-raws] Show - 01.ja.srt", _shifted(2.0))
+        _write(where / "[shincaps] Show - 01.ja.srt",
+               _srt([t + 2.0 for t in CUE_STARTS[:60]]))
+        return where
+
+    dry_lib = _library(tmp_path / "dry")
+    wet_lib = _library(tmp_path / "wet")
+
+    dry = PIPE.sync(API.scan(str(dry_lib)), trash_root=str(tmp_path / "t1"))
+    wet = PIPE.sync(API.scan(str(wet_lib)), write=True,
+                    trash_root=str(tmp_path / "t2"))
+    assert dry.confident and wet.confident, "the fixture must align"
+
+    predicted = sorted(os.path.basename(p) for r in dry
+                       for p in r.would_supersede)
+    actually = sorted(os.path.basename(p) for r in wet for p in r.superseded)
+    assert predicted == actually, (predicted, actually)
+    assert predicted, "the fixture must produce a loser, or this proves nothing"
+
+    # ⚠ AND THE DRY RUN STILL MOVED NOTHING. The new field is a report, not
+    # a side effect -- the reason `superseded` could not be widened in place.
+    assert all(r.superseded == [] for r in dry), [r.superseded for r in dry]
+    assert os.path.exists(str(dry_lib / "[shincaps] Show - 01.ja.srt"))
+    # ⭐ And a run that WROTE does not double-report: `superseded` is the
+    # truth there and `would_supersede` would only be a second, staler copy.
+    assert all(r.would_supersede == [] for r in wet),         [r.would_supersede for r in wet]
+
+
+def test_two_UNREADABLE_language_tags_BOTH_SURVIVE_a_real_run(tmp_path,
+                                                              monkeypatch):
+    u"""🚨 THE DEFECT, END TO END, ON DISK. Measured 2026-09-18 against
+    a real video: a folder written by SubPlz, whose convention labels each
+    ALGORITHM with a language code. `av` and `ae` are not in
+    `sidecar.ISO_639_1` -- it omits 36 codes on purpose, because `ch`, `na`,
+    `wa` and friends are ordinary filename tokens -- so both read `und`, both
+    landed in one slot, and `E01.ae.srt` was moved to the trash.
+
+    ⭐ ASSERTED ON THE BYTES, not on the report. `superseded` is exactly the
+    field that was wrong about this class once already, so a check that reads
+    it is a check that trusts the thing under test.
+    """
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")
+    d = tmp_path / "d"
+    d.mkdir()
+    _write_mkv(d / "Show S01E01.mkv", MKV_CUES, duration_s=RUNTIME,
+               per_cluster=4)
+    a = _write(d / "Show S01E01.av.srt", _shifted(2.0))
+    b = _write(d / "Show S01E01.ae.srt",
+               _srt([t + 2.0 for t in CUE_STARTS[:120]]))
+    before = dict((f, hashlib.sha256(io.open(f, "rb").read()).hexdigest())
+                  for f in (a, b))
+
+    trash = tmp_path / "trash"
+    got = PIPE.sync(API.scan(str(d)), write=True, trash_root=str(trash))
+    assert got.confident, "the fixture must align, or this proves nothing"
+
+    for f in (a, b):
+        assert os.path.exists(f), "%s was removed from the library" % f
+        after = hashlib.sha256(io.open(f, "rb").read()).hexdigest()
+        assert after == before[f], "%s was rewritten" % f
+    assert not trash.exists() or os.listdir(str(trash)) == [],         os.listdir(str(trash))
+
+    # ⭐ AND ONE WAS STILL WRITTEN. Both candidates resolve to the SAME
+    # output name, so a fix that refused the slot outright would trade a lost
+    # file for a file never written -- which is not an improvement.
+    written = [r for r in got if r.output_path]
+    assert len(written) == 1, [(r.subtitle, r.output_path) for r in got]
+    assert os.path.basename(written[0].output_path) == u"Show S01E01.srt"
+    assert any(u"not trashed" in n.lower()
+               for n in written[0].notes), written[0].notes
+
+
 def test_dedupe_false_trashes_nothing_and_SAYS_so(tmp_path, monkeypatch):
     u"""⚠ *"nothing was trashed"* and *"nothing lost"* are different claims,
     so the losers are still named."""

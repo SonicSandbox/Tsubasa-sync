@@ -2195,6 +2195,15 @@ def _result_for(video_path, m, outcome, reason, report=None, superseded=(),
     written = None
     if report is not None and report.performed and report.written:
         written = report.written[0][1]
+    # ⭐ THE DRY RUN'S OWN CHANNEL FOR THE ONE IRREVERSIBLE ACTION.
+    # `superseded` above is *paths actually moved* and is right to be empty
+    # here; see `api.Result.would_supersede` for what that left uncovered.
+    # ⚠ `report.trashed` in dry-run mode is what `apply_plan` WOULD move,
+    # having already dropped the losers the trash rules protect -- so it is the
+    # honest source, and the plan is not.
+    would = []
+    if report is not None and not report.performed:
+        would = [t.path for t in report.trashed]
     notes = list(notes)
     if report is not None:
         notes.extend(report.notes)
@@ -2257,6 +2266,7 @@ def _result_for(video_path, m, outcome, reason, report=None, superseded=(),
                    else u""),
         output_path=written,
         superseded=superseded,
+        would_supersede=would,
         lang=(m.sidecar.lang if m.sidecar is not None else None),
         lang_tag=(m.sidecar.tag if m.sidecar is not None else u""),
         # 🚨 `forced` MARKS THE PAIR THAT WAS ACTUALLY OVERRIDDEN, not every

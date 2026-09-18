@@ -95,6 +95,68 @@ other route — it needs Python 3.8+, and it installs the same code from PyPI.
 
 ---
 
+## If Defender removed the download
+
+**It did not delete it.** Defender *quarantines* — the file is set aside where
+it cannot run, and it can be put back. Most people read *"threat removed"* as
+*"gone"* and go looking for another download; there is no need.
+
+The usual verdict is **`Trojan:Win32/Wacatac.B!ml`**. The `!ml` on the end means
+it came from a machine-learning model rather than from a match against a known
+piece of malware — in other words, it is a guess about shape, and here it is
+wrong. What it recognises is **PyInstaller's launcher**, the small stub that
+unpacks the app and starts Python. Every application packaged this way carries
+the same stub, malware authors use the same packager, and unsigned builds have
+no signature to weigh against it. None of it is specific to tsubasa.
+
+> ⚠ **Only restore a file you are confident about.** You downloaded this from
+> the releases page and the checksum is published below — check it after you
+> restore, and you have verified the bytes yourself rather than taking anyone's
+> word for it.
+
+### The clicking way
+
+1. Press **Start**, type **Windows Security**, open it.
+2. **Virus & threat protection**.
+3. Under *Current threats*, click **Protection history**.
+4. Find the entry for `tsubasa-windows-x64.zip` or `tsubasa-gui.exe`.
+5. Open it, then **Actions** → **Restore**.
+
+### The one-line way
+
+Open PowerShell **as Administrator**, then list what is quarantined:
+
+```powershell
+& "C:\Program Files\Windows Defender\MpCmdRun.exe" -Restore -ListAll
+```
+
+and restore by the threat name it reports:
+
+```powershell
+& "C:\Program Files\Windows Defender\MpCmdRun.exe" -Restore -Name "Trojan:Win32/Wacatac.B!ml"
+```
+
+`-FilePath` restores one specific file instead, and `-Path` puts it somewhere
+other than where it came from.
+
+### Then stop it happening again
+
+Restoring a file does not stop the next scan taking it back. Add the folder you
+extracted tsubasa into as an exclusion — the section at the top of this page
+covers how, and what the trade-off is.
+
+### Or skip the whole thing
+
+```bash
+pip install "tsubasa-sync[gui]"
+tsubasa-gui
+```
+
+Same application, from PyPI. It needs Python 3.8+, it starts faster, and
+nothing about it trips this.
+
+---
+
 ## Verify what you downloaded
 
 Every release publishes a `SHA256SUMS` file next to the zip. Before you extract:

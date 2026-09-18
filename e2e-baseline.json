@@ -78,11 +78,10 @@
     "mirrored": true
   },
   "second_run": {
-    "converged_to_one_subtitle": 4,
+    "converged_to_one_subtitle": 5,
     "everything_that_left_is_recoverable": true,
     "overwritten_in_place": [],
     "taken_by_the_first_run": [
-      "Yomi no Tsugai/[NanakoRaws] Yomi no Tsugai S01E18 (AT-X TV 1080p HEVC AAC).srt",
       "Yomi no Tsugai/黄泉のツガイ.S01E18.WEBRip.ABEMA.ja[cc].srt"
     ],
     "taken_by_the_second_run": [

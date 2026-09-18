@@ -751,7 +751,8 @@ class Result(object):
                  "excess_over_chance", "raw_excess", "verdict_word", "reason",
                  "holds_throughout", "runtime_check", "cluster_coherence",
                  "dropped_in_gap", "dropped_before_zero", "reference_kind",
-                 "reference", "output_path", "superseded", "lang", "lang_tag",
+                 "reference", "output_path", "superseded", "would_supersede",
+                 "lang", "lang_tag",
                  "forced", "write_failed", "episode", "notes")
 
     def __init__(self, video, subtitle, outcome, reason=u"", segments=(),
@@ -760,7 +761,8 @@ class Result(object):
                  runtime_check=u"absent", cluster_coherence=None,
                  dropped_in_gap=0, dropped_before_zero=0,
                  reference_kind=TEXT_TRACK, reference=u"", output_path=None,
-                 superseded=(), lang=None, lang_tag=u"", forced=False,
+                 superseded=(), would_supersede=(), lang=None,
+                 lang_tag=u"", forced=False,
                  write_failed=False, episode=None, notes=()):
         if outcome not in OUTCOMES:
             raise ValueError(
@@ -866,6 +868,27 @@ class Result(object):
         #: The same defect `output_path` above already had fixed, left in place
         #: next door. Found by an adversarial pass.
         self.superseded = list(superseded)
+        #: ⚠ Paths this run WOULD have moved to the trash, populated on a
+        #: DRY RUN only. Empty on a run that wrote, where `superseded` above is
+        #: the truth and this would merely duplicate it.
+        #:
+        #: 🚨 IT EXISTS BECAUSE `superseded` CORRECTLY REFUSES TO ANSWER
+        #: THIS QUESTION. That field is *paths actually moved*, and a dry run
+        #: moves nothing -- so the mode whose entire job is to PREDICT the
+        #: destructive action had no channel to report it, and `--dry-run`
+        #: printed *"7 would sync"* over a folder where the very next real run
+        #: said *"1 subtitle superseded → trash"* and emptied a file out of
+        #: the library. `--dry-run`'s own help is *"print every intended
+        #: action"*; the one intended action that is not reversible was the one
+        #: it left out.
+        #:
+        #: ⭐ Taken from `report.trashed`, not from `plan.superseded`. The
+        #: plan is what dedupe WANTED; `apply_plan` walks the same branches in
+        #: dry-run mode and drops the losers it must not touch -- nothing
+        #: written for the slot, or the winner writing over itself. Reading the
+        #: plan would over-promise a deletion in exactly the cases the trash
+        #: rules exist to prevent.
+        self.would_supersede = list(would_supersede)
         self.lang = lang
         #: What the file itself said, kept apart from the resolved code --
         #: `05-interface.md`: *`ja-jp` and `.jpn.` are the same language and

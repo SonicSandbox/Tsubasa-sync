@@ -307,6 +307,12 @@ click one to read the full reason. Every option lives behind one button.
 
 ### Windows, without installing Python
 
+> ⭐ **If you already have Python, use `pip install "tsubasa-sync[gui]"`
+> instead.** It is the same application, it starts in about a second rather
+> than a few, and antivirus never touches it. The zip below exists for
+> people who do not have Python — it carries a whole interpreter, and that
+> is what makes it both slower to start and prone to false positives.
+
 `tsubasa-windows-x64.zip` on the [releases
 page](https://github.com/SonicSandbox/Tsubasa-sync/releases) is the whole app
 with Python inside it. Unzip it anywhere and double-click **`tsubasa-gui.exe`**;
@@ -315,9 +321,17 @@ on the same page is the checksum.
 
 > ⚠ **It is not code-signed, so the first launch is noisy.** Windows
 > SmartScreen shows *"Windows protected your PC"* — click **More info**, then
-> **Run anyway**. Defender may also quarantine a freshly-downloaded copy. The
+> **Run anyway**. The
 > zip carries no installer and writes nothing outside `%LOCALAPPDATA%\tsubasa`
 > and the subtitles it syncs.
+
+> 🚨 **If your antivirus removes the download, it is a false positive
+> — and the file is not gone.** Defender *quarantines*; it does not delete,
+> and it is a few clicks from coming back.
+> [`docs/WINDOWS-STARTUP.md`](docs/WINDOWS-STARTUP.md#if-defender-removed-the-download)
+> has both ways to restore it. What gets flagged is PyInstaller's launcher
+> — the same stub every app packaged this way carries — not anything
+> specific to tsubasa. `pip install tsubasa-sync` avoids it entirely.
 
 > ⏱ **The first launch after a reboot takes a few seconds.** Being unsigned,
 > the app gets scanned in full — 1,274 files — every cold start. Later launches

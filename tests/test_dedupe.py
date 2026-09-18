@@ -254,6 +254,62 @@ def test_trashing_something_already_gone_is_not_an_error(tmp_path):
 # ⛔ CLAIM 2 -- rule 1 is a GATE
 # ---------------------------------------------------------------------------
 
+def test_an_UNREADABLE_language_supersedes_NOTHING_but_still_picks_one():
+    u"""🚨 `und` IS NOT A LANGUAGE -- IT IS THE ABSENCE OF ONE.
+
+    MEASURED 2026-09-18 on a real folder: `E01.av.srt` and `E01.ae.srt`.
+    Neither `av` nor `ae` is in `sidecar.ISO_639_1` (which omits 36 codes on
+    purpose), so both resolved to `und`, they shared one slot, and one was
+    moved to the trash for a file it has no established relationship with.
+
+    ⭐ BOTH HALVES ARE ASSERTED, and that is the whole point. The slot must
+    still pick ONE, because both candidates resolve to the same output name
+    and the second write would destroy the first -- so a fix that simply
+    refused the slot would trade a lost file for a file never written.
+    """
+    both = [cand(u"Show - 01.av.srt", confident()),
+            cand(u"Show - 01.ae.srt", confident())]
+    plan = D.plan(u"Show - 01", both)
+    assert plan.lang == S.UND, plan.lang
+    assert len(plan.writes) == 1, plan.writes       # the collision is real
+    assert plan.superseded == [], plan.superseded   # nothing is thrown away
+    assert any(u"not trashed" in n.lower() for n in plan.notes), plan.notes
+    # ⛔ AND IT NAMES THE FILE THAT WAS LEFT BEHIND -- whichever one that
+    # is. ⚠ Naming a specific filename here asserted the RANKING instead:
+    # the two tie on every rule and break on the path, so `.ae.` wins and the
+    # note names `.av.`. The property is *the survivor is named*, not *which
+    # one survives*.
+    losers = [c for c in both if c is not plan.winner]
+    assert len(losers) == 1, losers
+    assert any(os.path.basename(losers[0].path) in n
+               for n in plan.notes), plan.notes
+
+
+def test_a_KNOWN_shared_language_STILL_supersedes():
+    u"""⚠ THE CONTROL FOR THE CHECK ABOVE, and it is load-bearing.
+
+    Without it, `superseded = []` written unconditionally passes every
+    assertion in this file's unknown-language check while silently disabling
+    dedupe for the entire product.
+    """
+    plan = D.plan(u"Show - 01", [cand(u"[A] Show - 01.ja.srt", confident()),
+                                 cand(u"[B] Show - 01.ja.srt", confident())])
+    assert plan.lang == u"ja", plan.lang
+    assert len(plan.writes) == 1, plan.writes
+    assert len(plan.superseded) == 1, plan.superseded
+
+
+def test_a_SINGLE_unreadable_candidate_is_unaffected():
+    u"""⚠ The common case, pinned so the guard cannot quietly widen: one
+    untagged subtitle beside its video is a slot with no loser, and it must
+    still be written exactly as before."""
+    plan = D.plan(u"Show - 01", [cand(u"Show - 01.srt", confident())])
+    assert plan.lang == S.UND, plan.lang
+    assert len(plan.writes) == 1, plan.writes
+    assert plan.superseded == []
+    assert not any(u"not trashed" in n.lower() for n in plan.notes), plan.notes
+
+
 def test_when_NOTHING_is_confident_there_is_no_winner():
     u"""🚨 The whole reason rule 1 is not a sort key. The best of several
     refused files is still a refused file."""

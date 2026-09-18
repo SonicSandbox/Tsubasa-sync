@@ -333,6 +333,28 @@ basename.** That is what "clean" means operationally.
 > Keep **one subtitle per (video × language)**. Name it exactly
 > `<video-basename>.<lang>.<ext>`. Every other candidate for that slot goes to trash.
 
+### 🚨 — EXCEPT WHEN THE LANGUAGE IS UNKNOWN. ADDED 2026-09-18
+
+**`und` is not a language. It is the absence of one**, and reading it as a value
+is how two files whose tags tsubasa could not parse were called the same language
+and one was moved to the trash.
+
+| Question | Unknown language |
+| --- | --- |
+| Which candidate is **written**? | Still decided. They all resolve to the same output name, and a second write destroys the first |
+| Which candidates are **trashed**? | ⛔ **None** |
+
+⭐ Identical to the split already ruled for the explicit path above — *decides
+what is written, never what is thrown away*. ⚠ **A restriction, not a feature:**
+the only folders it changes hold two or more subtitles whose tags are both
+unreadable. One untagged subtitle beside its video is a slot with no loser.
+
+⛔ **Do not "fix" this by widening `ISO_639_1`.** Its 36 absent codes include
+ordinary filename tokens (`ch`, `na`, `pi`, `wa`, `an`, `os`); recognising them
+trades an honest `und` for a confidently wrong language, and the next two
+unreadable tags still collide. `ja[no-sdh]` reads `und` **on purpose**.
+**Widen only with a measurement.**
+
 ### Ranking, when there are several candidates
 
 Sonic's note: *"most people won't have multiple subs of the same show… I just have it
@@ -377,6 +399,88 @@ true: `apply_plan` states the obligation and assigns it to its caller. Flattened
 shows' `Season 1/01.mkv` produce **one** output file and the second reports CONFIDENT.
 ⛔ **`--out` with `--no-rename` is a contradiction and is refused** — in-place and
 somewhere-else cannot both hold.
+
+### 🚨 A DRY RUN MUST NAME WHAT IT WOULD TRASH — ADDED 2026-09-18
+
+`--dry-run` is *"print every intended action; write and trash nothing."*
+**Writes are an intended action and so is the trash**, and only one of them is
+irreversible. `Result.superseded` is *paths actually moved* and is right to be
+empty on a dry run, so the prediction rides on its own field:
+
+| Field | When | Means |
+| --- | --- | --- |
+| `superseded` | a run that **wrote** | paths that actually moved to the trash |
+| `would_supersede` | a **dry run** only | paths this run would move |
+
+⭐ **The CLI NAMES them, one per line.** Reading a dry run is how a person
+decides whether they agree with it, and *"1 subtitle"* is not something anyone
+can agree or disagree with. Measured before the fix: `7 would sync` against the
+identical real run's `1 subtitle superseded → trash`. `LEDGER.md` §Interface.
+
+### ⏸ OPEN — FOREIGN TOOLS THAT USE LANGUAGE CODES AS ALGORITHM MARKERS
+
+**Raised by a user 2026-09-18; NOT RULED. Nothing here is implemented.**
+
+[SubPlz](https://github.com/kanjieater/SubPlz) writes one subtitle per
+*algorithm* and distinguishes them with **real ISO 639-1 codes used as labels**,
+because media players switch tracks by language:
+
+| SubPlz writes | It means | tsubasa reads it as |
+| --- | --- | --- |
+| `.ab.` | Bazarr — the downloaded, untimed sub | **Abkhazian** |
+| `.as.` | Alass output | **Assamese** |
+| `.ak.` | SubPlz AI alignment | **Akan** |
+| `.az.` | FasterWhisper, audio only | **Azerbaijani** |
+| `.av.` | Alass variant | `und` — stem becomes `…E01.av` |
+| `.ae.` | the embedded target-language track | `und` — stem becomes `…E01.ae` |
+| `.en.` | the **original** | English |
+| `.ja.` | the preferred copy | Japanese |
+
+🚨 **Measured end to end on a real video, 2026-09-18.** Eight sidecars in:
+**seven synced, none deduped** — every recognised code is a *different language*,
+so each gets its own slot and wins it uncontested. The two unrecognised codes
+collapse into one `und` slot, so **`.ae.srt` — the embedded Japanese track — was
+trashed**, and the `und` winner was written out a second time under the bare
+name `my-anime-S01-E01.srt`.
+
+⚠ **So the honest answer to *"can it clean these up?"* is no, and it is worse
+than no:** it retimes files that are already aligned attempts, it retimes
+machine-transcribed text whose *words* may be wrong — which no timing-based
+verdict can detect — and it throws away one real subtitle while duplicating
+another.
+
+⚠ **And this is a CLASS, not one tool.** Any convention that overloads the
+language field breaks the *"one subtitle per (video × language)"* rule at its
+root, because the rule assumes the tag means a language.
+
+**What is NOT in question:** tsubasa already pairs and already dedupes. What it
+lacks is any notion that a tag might name a *provenance* rather than a language.
+
+**Forks, for Sonic — none taken:**
+
+1. **Nothing.** Say so in the README and point those users at `--keep-all`.
+2. **Refuse, loudly.** Detect the shape and decline the folder with a sentence
+   naming SubPlz. Costs nothing, protects the `.ae.` case, ships in an hour.
+3. **A `--prefer` / provenance flag.** The user names which tag is canonical;
+   tsubasa syncs that one and leaves the rest alone.
+4. **Know the convention.** Ship the table above; treat the group as one slot.
+   ⚠ The largest option and the one that ties this project to another's
+   configurable defaults — the codes are `config.yml` values, not constants.
+
+✅ **THE DATA LOSS IS FIXED — 2026-09-18, independent of this decision.**
+The `und`-slot collapse was a defect in its own right and is closed: two files
+whose tags tsubasa cannot read are no longer treated as the same language, and
+neither is trashed for the other. See §*Except when the language is unknown*
+above, `LEDGER.md` §Logic, and `RUNBOOK.md` Step 4j.
+
+⭐ **WHICH DEFUSES THIS DECISION.** Re-measured on the same folder after the
+fix: **eight subtitles in, seven synced, nothing trashed, every source file
+byte-identical.** The outcome drops from *"it removed one of your files"* to
+*"it did not tidy up the way you hoped"* — annoying, not harmful. So the four
+forks above are a **want**, not a repair, and *"never build it"* is a complete
+answer. ⏸ **PARKED** pending the reporter's own answer to the one question that
+decides the shape: hard-code the table, or let the user name the postfix they
+trust.
 
 ### `--keep-all`
 

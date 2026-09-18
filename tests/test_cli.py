@@ -1030,3 +1030,47 @@ def test_version_reports_the_build_it_was_HANDED_not_the_one_it_imports():
     check = SC.self_check()
     check.version = u"9.9.9-elsewhere"
     assert CLI.version_lines(check=check)[0] == u"tsubasa 9.9.9-elsewhere"
+
+
+def test_a_DRY_RUN_NAMES_THE_FILE_IT_WOULD_TRASH():
+    u"""🚨 `--dry-run` is *"print every intended action"*, and the one
+    intended action that cannot be undone was the only one it left out.
+
+    The summary counted `Result.superseded`, which is *paths actually moved*
+    and is therefore always empty on a dry run -- so the whole section was
+    skipped. Measured: *"7 would sync"* against a real run's *"1 subtitle
+    superseded → trash"* over the same folder.
+
+    ⭐ NAMED, NOT COUNTED. Reading a dry run is how you decide whether you
+    agree with it, and *"1 subtitle"* is not something anyone can agree with.
+    """
+    # 🚨 THE LOSER MUST NOT APPEAR AS A RESULT ROW, and that is the
+    # whole fixture. On the scan path a candidate that loses its slot is
+    # `superseded`, NOT a line -- so the only place its name can legitimately
+    # appear is the section under test. The first version of this check used
+    # the same filename for the loser and for a rendered row, and **a mutant
+    # that deleted the naming loop survived**: the assertion was reading the
+    # row above it. The name below is deliberately unlike every other name in
+    # the report.
+    lines = render(a_report([
+        a_result(subtitle=u"/lib/[Erai-raws] Show - 01.ja.srt",
+                 would_supersede=[u"/lib/OnlyInTheTrashLine.ja.srt"]),
+    ]))
+    text = u"\n".join(lines)
+    assert u"would be superseded" in text, text
+    assert u"OnlyInTheTrashLine.ja.srt" in text, text
+    # ⚠ AND IT DOES NOT CLAIM THE PAST TENSE. A dry run saying *"superseded
+    # → trash"* reads as a file that has already moved.
+    assert u"1 subtitle superseded" not in text, text
+
+
+def test_a_run_that_WROTE_reports_the_trash_in_the_PAST_tense():
+    u"""⚠ The other side of the check above: the live wording must survive
+    the dry-run wording being added beside it."""
+    text = u"\n".join(render(a_report([
+        a_result(subtitle=u"/lib/[Erai-raws] Show - 01.ja.srt",
+                 output_path=u"/lib/Show S01E01.ja.srt",
+                 superseded=[u"/lib/[shincaps] Show - 01.ja.srt"]),
+    ])))
+    assert u"1 subtitle superseded → trash" in text, text
+    assert u"would be superseded" not in text, text

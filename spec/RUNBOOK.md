@@ -2024,6 +2024,83 @@ equivalents), **3/3**.
 
 ---
 
+## Step 4j — ✅ The two destructive-path safety fixes — DONE 2026-09-18
+
+**Both found by investigating a user's question, not by a planned step.** Both
+are about the same thing: what this tool throws away, and whether it says so
+first. Together they are 0.1.7.
+
+### 1 — `--dry-run` did not report the trash
+
+`--dry-run` printed `7 would sync` over a folder where the identical real run
+printed `1 subtitle superseded → trash` and moved a file out of the library.
+Its own help is *"print every intended action; write and trash nothing"*, and
+the one irreversible intention was the only one missing. Full narrative in
+`LEDGER.md` §Interface.
+
+⭐ Fixed with `api.Result.would_supersede`, populated on a dry run only and
+taken from `report.trashed` rather than from `plan.superseded`. `superseded`
+keeps its meaning — paths that actually moved. The CLI **names** the file.
+
+### 2 — `und` was treated as a language, and a real file was trashed for it
+
+Two subtitles whose language tags tsubasa cannot parse both resolve to `und`,
+shared one slot, and one went to the trash. `dedupe.plan` now supersedes
+nothing when the slot's language is unknown — it still picks which file is
+**written**, because every candidate resolves to the same output name and the
+second write would destroy the first. That split is `05-interface.md`'s own
+ruling for the explicit path, reaching a case it had missed.
+
+⛔ **Not fixed by widening the language table**, and `sidecar.py` says why: the
+36 absent ISO codes include ordinary filename tokens (`ch`, `na`, `pi`, `wa`,
+`an`, `os`), so recognising them trades an honest `und` for a confidently wrong
+language. **Widen only with a measurement.**
+
+### 🚨 The e2e floor moved, and it is the fix showing up on real files
+
+`e2e-baseline.json` was re-recorded. **Exactly two fields changed in the whole
+floor**, diffed field by field before re-recording:
+
+| Field | Was | Now |
+| --- | --- | --- |
+| `second_run.taken_by_the_first_run` | 2 files | **1 file** |
+| `second_run.converged_to_one_subtitle` | 4 | **5** |
+
+The file that no longer leaves the library is
+`[NanakoRaws] Yomi no Tsugai S01E18 (AT-X TV 1080p HEVC AAC).srt` — **untagged,
+therefore `und`**. The `ja[cc]` ABEMA file is still superseded, correctly, in a
+slot whose language IS known. ⭐ So the benchmark records one real broadcast
+file surviving a real run that used to consume it.
+
+⚠ Everything else the scenario asserts held: `all_recoverable`,
+`third_run_changed_nothing`, `overwritten_in_place == []`, and
+`taken_by_the_first_run` still non-empty — which is the denominator that stops
+the convergence claim passing on a run that moved nothing.
+
+### Checks
+
+| Check | Suite |
+| --- | --- |
+| `test_a_DRY_RUN_and_a_REAL_RUN_AGREE_ABOUT_WHAT_GOES_TO_THE_TRASH` | pipeline |
+| `test_a_DRY_RUN_NAMES_THE_FILE_IT_WOULD_TRASH` · `test_a_run_that_WROTE_reports_the_trash_in_the_PAST_tense` | cli |
+| `test_an_UNREADABLE_language_supersedes_NOTHING_but_still_picks_one` | dedupe |
+| ⭐ `test_a_KNOWN_shared_language_STILL_supersedes` | dedupe — **the control**, without which `superseded = []` written unconditionally passes every other check here while disabling dedupe for the whole product |
+| `test_a_SINGLE_unreadable_candidate_is_unaffected` | dedupe — the common case, pinned so the guard cannot widen |
+| `test_two_UNREADABLE_language_tags_BOTH_SURVIVE_a_real_run` | pipeline — asserted on **sha256 of the bytes on disk**, not on `superseded`, which is the field that was wrong about this class once already |
+
+**Six mutants, six kills.** Three per fix. ⭐ The control earned its place
+immediately: the *supersede nothing, ever* mutant took down **11** tests.
+
+⚠ **And a check of mine was wrong before it was right.** The first version of
+the dry-run naming check used the same filename for the trashed loser and for a
+rendered result row, so deleting the naming loop left the assertion reading the
+row above it — **the mutant survived**. The fixture now uses a name that can
+appear nowhere else in the report. *The fixture held constant exactly what the
+defect varied.*
+
+**Full runner: 39 suites, 0 ABSENT, GREEN.**
+
+
 ## Step 4b — Rust ⏸
 
 Unjustified: B1 runs at 49 ms/pair in numpy, measured. Revisit only if B5 misses its target on the

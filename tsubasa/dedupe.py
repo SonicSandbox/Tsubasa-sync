@@ -47,7 +47,7 @@ When nothing is confident there is **no winner and nothing is written**.
 import os
 import shutil
 
-from .sidecar import output_name
+from .sidecar import UND, output_name
 
 #: Where the fallback puts things when the OS has no trash.
 #:
@@ -334,10 +334,67 @@ def plan(video_stem, candidates, lang=None, keep_all=False, ext=None):
     # AWAY -- ONLY THE RUN CAN* arriving through a door the 3b cross-slot
     # rules do not cover, because no slot WRITES those files and so nothing
     # protects them.
-    superseded = [c for c in ordered
-                  if c is not winner and not c.speculative]
-    kept = [c for c in ordered
-            if c is not winner and c.speculative]
+    # =====================================================================
+    # ⛔ AND NOTHING IS SUPERSEDED WHEN THE SLOT'S LANGUAGE IS UNKNOWN
+    # =====================================================================
+    #
+    # 🚨 `und` IS NOT A LANGUAGE. IT IS THE ABSENCE OF ONE, and reading
+    # it as a value is how two files whose tags tsubasa could not parse were
+    # called the same language and one of them was thrown away. MEASURED
+    # 2026-09-18 on a real folder: `E01.av.srt` and `E01.ae.srt` -- neither
+    # `av` nor `ae` is in `sidecar.ISO_639_1`, which excludes 36 codes ON
+    # PURPOSE -- both resolved to `und`, shared one slot, and `E01.ae.srt` went
+    # to the trash for a file it has no established relationship with.
+    #
+    # ⭐ THE SPLIT THAT MAKES THIS RIGHT IS ALREADY RULED, for a different
+    # case. `05-interface.md`, on the explicit path: *"Dedupe still decides
+    # which one is WRITTEN -- two writes to one name is data loss -- but not
+    # what is thrown away."* Both halves hold here, for the same two reasons:
+    #
+    #   * the slot must still pick ONE, because every candidate in it resolves
+    #     to the same output name and the second write would destroy the first;
+    #   * it must supersede NOTHING, because *"I cannot read this tag"* and
+    #     *"I cannot read that tag"* is not evidence that two files are the
+    #     same language. It is the absence of evidence either way.
+    #
+    # ⚠ A RESTRICTION, NOT A FEATURE. The only folders this can change are
+    # those holding TWO OR MORE subtitles whose language tags are both
+    # unreadable. One untagged subtitle beside its video -- overwhelmingly the
+    # common case -- is a slot with a single candidate, which has no loser and
+    # never reaches this line.
+    #
+    # ⛔ AND IT IS NOT A LICENCE TO WIDEN THE TABLE INSTEAD. `sidecar.py`
+    # rules that directly: the 36 absent codes include ordinary filename
+    # tokens (`ch`, `na`, `pi`, `wa`, `an`, `os`), so recognising them would
+    # trade an honest `und` for a confidently wrong language -- **widen only
+    # with a measurement**. This layer is what to do when recognition comes
+    # back empty, which is a different question from what to recognise.
+    unknown_language = (lang == UND)
+    if unknown_language:
+        superseded = []
+        unreadable = [c for c in ordered if c is not winner]
+        kept = []
+    else:
+        superseded = [c for c in ordered
+                      if c is not winner and not c.speculative]
+        unreadable = []
+        kept = [c for c in ordered
+                if c is not winner and c.speculative]
+    if unreadable:
+        # ⛔ NEVER SILENT -- the same contract the speculative note below
+        # carries. A file left alone for a reason the user cannot see reads as
+        # a file the tool forgot about.
+        notes.append(
+            u"%d subtitle%s NOT trashed: no language could be read from "
+            u"%s name, and an unreadable tag is not evidence that two files "
+            u"are the same language. Only one file can be written as %s, so "
+            u"the %s left exactly where %s: %s"
+            % (len(unreadable), u"" if len(unreadable) == 1 else u"s",
+               u"its" if len(unreadable) == 1 else u"their",
+               name,
+               u"other is" if len(unreadable) == 1 else u"others are",
+               u"it is" if len(unreadable) == 1 else u"they are",
+               u", ".join(os.path.basename(c.path) for c in unreadable[:4])))
     if kept:
         # ⛔ NEVER SILENT. A file left alone for a reason the user cannot see
         # reads as a file the tool forgot about.
