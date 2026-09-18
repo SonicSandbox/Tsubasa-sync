@@ -290,15 +290,34 @@ def test_lang_asks_the_same_question_however_Japanese_is_spelled(tmp_path):
 
 def test_an_unrecognised_lang_RAISES_rather_than_matching_nothing(tmp_path):
     u"""*"No Japanese track"* is an answer a caller acts on, so a typo may not
-    produce it -- including the two-letter one (adversary: `jp`)."""
+    produce it -- including the two-letter one (adversary: `jp`).
+
+    ⚠ `japanese` WAS IN THIS LIST AND IS NOT A TYPO. RUNBOOK 4f made the
+    filename reader accept English display names, because Jellyfin and Emby
+    write them -- and `api._language_asked_for`'s whole rule is *through the
+    SAME reader, so `unpaired(lang=...)` and a filename can never disagree
+    about what Japanese is.* ⛔ Refusing it here would break that, and would
+    make this function's own error message -- *"not a language tag tsubasa
+    reads from filenames"* -- a false statement about a name it now reads.
+
+    ⭐ The check's INTENT is untouched: the two entries that remain are
+    genuine typos, and they still raise.
+    """
     path = _mkv(tmp_path / "v.mkv", SHAPES)
     tried = 0
-    for typo in (u"japanese", u"jp", u"ja_JP"):
+    for typo in (u"jp", u"ja_JP", u"japanse", u"nihongo"):
         with pytest.raises(ValueError) as raised:
             tsubasa.embedded_subs(path, lang=typo)
         assert typo in (u"%s" % raised.value), raised.value
         tried += 1
-    assert tried == 3
+    assert tried == 4
+
+    # ⭐ AND THE ENGLISH NAME IS ACCEPTED, resolving to the same code the
+    # two- and three-letter forms do.
+    for spelling in (u"japanese", u"Japanese", u"JAPANESE"):
+        assert tsubasa.embedded_subs(path, lang=spelling).ok, spelling
+    assert ([t.lang for t in tsubasa.embedded_subs(path, lang=u"Japanese").tracks]
+            == [t.lang for t in tsubasa.embedded_subs(path, lang=u"ja").tracks])
 
 
 def test_BCP47_wins_and_a_region_or_script_does_not_hide_the_language(tmp_path):

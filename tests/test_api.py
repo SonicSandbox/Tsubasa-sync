@@ -1317,11 +1317,27 @@ def test_unpaired_by_LANGUAGE_finds_the_video_that_only_has_English(tmp_path):
 
 def test_an_unrecognised_language_RAISES_instead_of_unpairing_everything(
         tmp_path):
+    u"""⚠ `japanese` WAS THE FIXTURE HERE AND IS NO LONGER A TYPO. RUNBOOK 4f
+    made the filename reader accept English display names — Jellyfin and Emby
+    write them — and `_language_asked_for` resolves a caller's language
+    **through that same reader**, deliberately, so an argument and a filename
+    can never disagree about what Japanese is.
+
+    ⭐ The rule this check exists for is unchanged: an unrecognised language
+    must RAISE rather than resolve to `und`, which would compare every
+    subtitle against *no language* and report the whole library unpaired — a
+    confidently wrong answer to a typo.
+    """
     _touch(tmp_path, u"Show - 01.mkv", u"Show - 01.ja.srt")
     scan = tsubasa.scan(str(tmp_path))
-    with pytest.raises(ValueError) as exc:
-        scan.unpaired(lang=u"japanese")
-    assert u"japanese" in str(exc.value)
+    for typo in (u"japanse", u"jp", u"ja_JP", u"nihongo"):
+        with pytest.raises(ValueError) as exc:
+            scan.unpaired(lang=typo)
+        assert typo in str(exc.value), (typo, str(exc.value))
+
+    # ⭐ The English name resolves, and to the same answer as its code.
+    assert list(scan.unpaired(lang=u"Japanese")) == list(scan.unpaired(lang=u"ja"))
+
     assert [v.name for v, _ in scan.unpaired(lang=u"und")] == \
         [u"Show - 01.mkv"], u"`und` is a real request: no untagged subtitle"
 

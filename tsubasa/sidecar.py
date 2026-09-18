@@ -149,6 +149,41 @@ _THREE_TO_TWO.update(_BIBLIOGRAPHIC)
 #: one land in ONE slot — which is the whole point.
 _THREE_TO_TWO[UND] = UND
 
+#: 🚨 ENGLISH DISPLAY NAMES, BECAUSE JELLYFIN AND EMBY BOTH WRITE THEM.
+#: Reported by hato's agent and measured on 0.1.5: `Show - 01.Japanese.srt`,
+#: `.japanese.`, `.JAPANESE.` and `.English.` all read `und`, and
+#: `Show - 01.Japanese.forced.srt` lost the **forced flag** along with the
+#: language — because an unrecognised token stops the scan, so everything
+#: after it is stem rather than flags.
+#:
+#: ⛔ IT MATTERS TO THIS PROJECT, NOT ONLY TO CONSUMERS. `Show.ja.srt` and
+#: `Show.Japanese.srt` were two different languages, so they never shared a
+#: slot: neither superseded the other and a dedupe run kept both. And the
+#: stem itself differed — `Show - 01.Japanese` against `Show - 01` — so it
+#: was a pairing defect before it was a dedupe one.
+#:
+#: ⭐ A SECOND SPELLING OF A LANGUAGE THIS TABLE ALREADY KNOWS, never a new
+#: concept: every value here is a code already in `ISO_639_1`.
+#:
+#: ⚠ **Bounded on purpose, exactly as the code table above is.** These are
+#: the names the two players actually emit; a full ISO name list would drag
+#: in words like `Bable`, `Ido` and `Lojban` that are likelier to be part of
+#: a title than a tag.
+_DISPLAY_NAMES = {
+    "english": "en", "japanese": "ja", "chinese": "zh", "korean": "ko",
+    "french": "fr", "german": "de", "spanish": "es", "italian": "it",
+    "portuguese": "pt", "russian": "ru", "arabic": "ar", "dutch": "nl",
+    "polish": "pl", "turkish": "tr", "swedish": "sv", "danish": "da",
+    "norwegian": "no", "finnish": "fi", "greek": "el", "hebrew": "he",
+    "hindi": "hi", "thai": "th", "vietnamese": "vi", "indonesian": "id",
+    "czech": "cs", "hungarian": "hu", "romanian": "ro", "ukrainian": "uk",
+    "bulgarian": "bg", "croatian": "hr", "serbian": "sr", "slovak": "sk",
+    "slovenian": "sl", "catalan": "ca", "estonian": "et", "latvian": "lv",
+    "lithuanian": "lt", "malay": "ms", "persian": "fa", "tamil": "ta",
+    "telugu": "te", "bengali": "bn", "filipino": "tl", "tagalog": "tl",
+}
+_THREE_TO_TWO.update(_DISPLAY_NAMES)
+
 LANGUAGE_TOKENS = frozenset(list(ISO_639_1) + list(_THREE_TO_TWO))
 
 

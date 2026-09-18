@@ -1603,6 +1603,50 @@ the package; the masters and the wordmark are clone-only in `docs/brand/`.
 
 ---
 
+## Step 4f — ✅ English display-name languages — DONE 2026-09-17
+
+**surfaces:** `logic` `harness` · **authority:** reported by **hato's agent**
+against 0.1.5, confirmed here before anything was changed.
+
+`Show - 01.Japanese.srt`, `.japanese.`, `.JAPANESE.` and `.English.` all read
+`und`; `Show - 01.Japanese.forced.srt` lost the **forced flag** too — one bug,
+because an unrecognised token stops the scan and everything after it becomes
+stem. ⛔ **tsubasa's own defect, not just a consumer's:** `Show.ja.srt` and
+`Show.Japanese.srt` never shared a slot, so a dedupe run kept both — and the
+**stems differed**, making it a pairing defect first. Jellyfin and Emby both
+document the form.
+
+⭐ **Fixed as one table-entry class** — a second spelling of a language the
+table already knows, every value an existing `ISO_639_1` code. All three of the
+reporter's constraints were already satisfied by existing machinery.
+
+### 🚨 The regression it almost shipped, and why real data was the only guard
+
+A sweep of **40,618 real subtitle filenames** found **8** with an English
+display name — **every one a scene-release token**
+(`…2004.JAPANESE.1080p.BluRay…`, describing the *audio*). ⛔ *"Whole
+dot-delimited token"* does not separate those, because `JAPANESE` is a whole
+token there. ⭐ The parser's existing **position** rule does: a language token
+counts only when everything after it is a flag.
+
+⭐ **Measured: 0 of 40,618 real filenames change; the `und` rate is identical.**
+⚠ And the limit of that is worth stating — this corpus is anime-sourced and has
+no Jellyfin/Emby tags, so it proves the fix **safe** and says nothing about
+whether it **helps**.
+
+### ⚠ Three of seven mutants survived the first pass, and all three were my fixtures
+
+The language at token index 1 in every fixture (so a mutant that stopped the
+scan after one token survived) · a tail of pure non-flags (so a rule loosened
+to *most of the rest are flags* survived) · and a witness pointed at the
+real-data check, which is **structurally blind** to display names because the
+corpus has none. **7/7 after the fixtures were fixed.**
+
+**Green:** `sidecar` **85 checks** (80 + 5), 7/7 mutants
+(`_work/probe_4f_1_display_name_mutants.py`).
+
+---
+
 ## Step 4b — Rust ⏸
 
 Unjustified: B1 runs at 49 ms/pair in numpy, measured. Revisit only if B5 misses its target on the

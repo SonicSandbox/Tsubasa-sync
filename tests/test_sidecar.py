@@ -668,3 +668,137 @@ def test_every_resolved_language_on_real_data_is_a_real_code(real_names):
             assert sc.lang in S.ISO_639_1, (
                 "%r resolved to %r, which is not an ISO 639-1 code"
                 % (name, sc.lang))
+
+
+# ---------------------------------------------------------------------------
+# 🚨 ENGLISH DISPLAY NAMES — Jellyfin and Emby both write them
+# ---------------------------------------------------------------------------
+
+def test_an_ENGLISH_DISPLAY_NAME_is_the_same_language_as_its_code():
+    u"""🚨 REPORTED BY hato's AGENT, MEASURED ON 0.1.5: `Show - 01.Japanese.srt`
+    read `und`, and so did `.japanese.`, `.JAPANESE.` and `.English.`.
+
+    ⛔ IT WAS THIS PROJECT'S BUG BEFORE IT WAS A CONSUMER'S. `Show.ja.srt` and
+    `Show.Japanese.srt` were two different languages, so they never shared a
+    slot — neither superseded the other and a dedupe run kept both. ⚠ And the
+    STEM differed too (`Show - 01.Japanese` against `Show - 01`), so it was a
+    **pairing** defect before it was a dedupe one.
+
+    ⭐ A second spelling of a language this table already knows, never a new
+    concept: every display name resolves to a code already in `ISO_639_1`.
+    """
+    for form in (u"Show - 01.Japanese.srt", u"Show - 01.japanese.srt",
+                 u"Show - 01.JAPANESE.srt", u"Show - 01.JaPaNeSe.srt"):
+        sc = S.parse(form)
+        assert sc.lang == u"ja", (form, sc.lang)
+        assert sc.stem == u"Show - 01", (form, sc.stem)
+
+    assert S.parse(u"Show - 01.English.srt").lang == u"en"
+    assert S.parse(u"Show - 01.Chinese.srt").lang == u"zh"
+
+    # ⭐ THE SLOT, which is the thing that was actually broken.
+    plain = S.parse(u"Show - 01.ja.srt")
+    spelt = S.parse(u"Show - 01.Japanese.srt")
+    assert (plain.stem, plain.lang) == (spelt.stem, spelt.lang), (
+        u"%r and %r are still different slots, so a dedupe run keeps both"
+        % (plain.name, spelt.name))
+
+    # ⚠ Every value is a code the module already had.
+    for name, code in S._DISPLAY_NAMES.items():
+        assert code in S.ISO_639_1, (name, code)
+
+
+def test_a_display_name_keeps_its_FLAGS_which_it_used_to_swallow():
+    u"""🚨 `Show - 01.Japanese.forced.srt` LOST THE FORCED FLAG TOO, and that
+    is not a second bug — it is the same one. An unrecognised token stops the
+    scan, so everything after it becomes stem rather than flags. A forced
+    subtitle silently read as an ordinary one."""
+    sc = S.parse(u"Show - 01.Japanese.forced.srt")
+    assert sc.lang == u"ja", sc.lang
+    assert sc.flags == [u"forced"], sc.flags
+    assert sc.stem == u"Show - 01", sc.stem
+
+    assert S.parse(u"Show - 01.Chinese.cc.srt").flags == [u"cc"]
+    assert S.parse(u"Show - 01.Japanese[cc].srt").lang == u"ja"
+
+    # ⚠ THE TAG IS NOT ALWAYS THE SECOND TOKEN, and the first version of this
+    # check only ever put it there — so a mutant that stopped the scan after
+    # one token survived, because one token was all these fixtures needed.
+    # A real library is full of `Show.S01E01.2024.Japanese.forced.srt`.
+    deep = S.parse(u"Show.S01E01.2024.Japanese.forced.srt")
+    assert deep.lang == u"ja", deep.lang
+    assert deep.flags == [u"forced"], deep.flags
+    assert deep.stem == u"Show.S01E01.2024", deep.stem
+
+
+def test_the_tag_is_kept_AS_WRITTEN_while_the_language_resolves():
+    u"""⭐ `05-interface.md`'s split: *keep the detected language and the
+    original tag separately.* The output name preserves what the user's other
+    tooling expects, so a Jellyfin library stays a Jellyfin library."""
+    sc = S.parse(u"Show - 01.Japanese.srt")
+    assert sc.lang == u"ja" and sc.tag == u"japanese", (sc.lang, sc.tag)
+    assert S.parse(u"Show - 01.ja.srt").tag == u"ja"
+
+
+def test_a_display_name_MID_NAME_is_a_release_token_and_NOT_a_language():
+    u"""🚨 THE REGRESSION THIS FIX COULD EASILY HAVE SHIPPED, and real data is
+    the only reason it did not.
+
+    A sweep of 40,618 real subtitle filenames found **8** carrying an English
+    display name — and every one is a **scene-release token**:
+    `Ghost.In.The.Shell.2.Innocence.2004.JAPANESE.1080p.BluRay.H264`, where
+    `JAPANESE` describes the AUDIO. ⛔ *Whole dot-delimited token* is not
+    enough to tell those apart, because `JAPANESE` is a whole token there.
+
+    ⭐ What saves it is the rule that was already here: a language token is
+    accepted only when **everything after it is a flag**. `1080p` is not a
+    flag, so the scan moves on. This check pins that, because a future
+    loosening of the position rule would break these eight files silently.
+    """
+    for release in (
+            u"Ghost.In.The.Shell.2.Innocence.2004.JAPANESE.1080p.BluRay.srt",
+            u"Teiichi.Battle.of.Supreme.High.2017.JAPANESE.1080p.x264.srt",
+            u"Girls.Farm.2017.JAPANESE.1080p.AMZN.WEBRip.DDP2.0.H.264.srt",
+            u"Some.Film.2019.ENGLISH.720p.WEB.srt"):
+        assert S.parse(release).lang == S.UND, (
+            u"%r is a release name; %r read its audio language as the "
+            u"subtitle's" % (release, S.parse(release).lang))
+
+    # 🚨 A MOSTLY-FLAG TAIL, and this is the fixture the first version lacked.
+    # Every name above has a tail of PURE non-flags, so a rule loosened from
+    # *all of the rest are flags* to *most of them are* still rejects them and
+    # the mutant survived. ⛔ Here one of the two trailing tokens IS a flag, so
+    # only the strict rule refuses — which is the rule that protects the eight
+    # real release names.
+    for mixed in (u"Movie.2004.JAPANESE.cc.1080p.srt",
+                  u"Movie.2004.JAPANESE.forced.BluRay.srt",
+                  u"Show.2019.ENGLISH.sdh.WEB.srt"):
+        assert S.parse(mixed).lang == S.UND, (
+            u"%r has a release token after the flag, so the language tag is "
+            u"not at the end and must not be read: got %r"
+            % (mixed, S.parse(mixed).lang))
+
+
+def test_the_display_names_change_NOTHING_on_the_real_corpus(real_names):
+    u"""⚠ MEASURED: 0 of 40,618 real filenames change under this fix, and the
+    `und` rate is identical before and after.
+
+    ⭐ That is the RIGHT result and it is worth stating plainly: this corpus is
+    anime-sourced and contains no Jellyfin or Emby display-name tags, so it
+    can prove the fix is SAFE and can say nothing about whether it HELPS.
+    `CORPUS-COVERAGE.md`'s standing question — *what does your real-data pass
+    not contain* — answers *an entire naming convention* here.
+    """
+    kept = S.LANGUAGE_TOKENS
+    try:
+        S.LANGUAGE_TOKENS = frozenset(t for t in kept
+                                      if t not in S._DISPLAY_NAMES)
+        before = [(S.parse(n).stem, S.parse(n).lang) for n in real_names]
+    finally:
+        S.LANGUAGE_TOKENS = kept
+    after = [(S.parse(n).stem, S.parse(n).lang) for n in real_names]
+
+    moved = [real_names[i] for i in range(len(real_names))
+             if before[i] != after[i]]
+    assert not moved, (
+        u"%d real filenames changed meaning: %r" % (len(moved), moved[:5]))
