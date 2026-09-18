@@ -11,6 +11,11 @@ neither pattern covers — without importing PyInstaller to do it.
 """
 from PyInstaller.utils.hooks import collect_data_files
 
-DATA_PATTERNS = ["data/*.tsv.gz", "data/*.json"]
+#: ⚠ THREE FILES MUST AGREE OR SOMETHING SHIPS WITHOUT ITS DATA: this list,
+#: `pyproject.toml`'s `[tool.setuptools.package-data]`, and the real contents
+#: of `tsubasa/data/`. `tests/test_packaging.py` reads this list out of the
+#: SYNTAX TREE and fails when they drift — which is how the icons were caught
+#: the moment they were added, with the fix named in the failure message.
+DATA_PATTERNS = ["data/*.tsv.gz", "data/*.json", "data/*.png", "data/*.ico"]
 
 datas = collect_data_files("tsubasa", includes=DATA_PATTERNS)

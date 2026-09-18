@@ -908,6 +908,242 @@ def _raises():
     raise ValueError(u"a button blew up")
 
 
+# ===========================================================================
+# 🚨 THE MARK — RUNBOOK 4e. FIVE SURFACES, FIVE MECHANISMS
+# ===========================================================================
+#
+# `BRANDING-SCOPE.md` §1: the title bar, the .exe's icon in Explorer, the
+# in-app marks, the README and the settings window are FIVE different
+# mechanisms. ⛔ *"The icon is set"* is five separate claims, and putting a
+# logo in one place does not put it in any of the others.
+
+def test_every_shipped_icon_size_loads_and_is_the_size_it_claims():
+    u"""⚠ EVERY SIZE IS A REAL EXPORT — the pack has no vector source, so
+    `image(24)` must return the 24 px file rather than the 256 resampled.
+    That is the difference between a legible small icon and mush.
+
+    ⛔ And a file named for a size it is not would be invisible otherwise:
+    Tk scales silently.
+    """
+    from tsubasa.gui import branding as B
+
+    sizes = B.available()
+    assert sizes, u"no icon-*.png shipped inside the package at %s" % B.data_dir()
+    assert 16 in sizes and 256 in sizes, sizes
+    for size in sizes:
+        assert os.path.isfile(B.icon_path(size))
+
+    # ⛔ A ROOT IS BUILT RATHER THAN SKIPPED AROUND. `PhotoImage` needs a Tk
+    # interpreter, and the first version simply skipped when there was none —
+    # which on a headless runner is coverage on nobody's machine. `_tk_root`
+    # already skips honestly if there is genuinely no display.
+    root = _tk_root()
+    try:
+        for size in sizes:
+            img = B.image(size, master=root)
+            assert img is not None, B.icon_path(size)
+            assert (img.width(), img.height()) == (size, size), (
+                u"icon-%d.png is %dx%d — a file named for a size it is not "
+                u"would be invisible, because Tk scales silently"
+                % (size, img.width(), img.height()))
+    finally:
+        root.destroy()
+
+
+def test_an_icon_that_cannot_be_read_is_NEVER_fatal(monkeypatch):
+    u"""⛔ `doctrine/architecture`: *instruction, not refusal.* A decorative
+    asset may not be load-bearing — a missing icon is a plainer window, not a
+    reason the application does not open."""
+    from tsubasa.gui import branding as B
+
+    monkeypatch.setattr(B, "data_dir", lambda: u"/nowhere-at-all")
+    assert B.available() == []
+    assert B.image(32) is None
+
+    class Root(object):
+        def iconphoto(self, *a):
+            raise RuntimeError(u"no")
+
+    assert B.set_window_icon(Root()) is False
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_icons_are_NOT_cached_across_interpreters_and_the_root_holds_them():
+    u"""🚨 A `PhotoImage` BELONGS TO THE Tk INTERPRETER THAT CREATED IT.
+
+    ⛔ The first design cached images in the module, for the life of the
+    process. It broke **eighteen checks at once** with `TclError: image
+    "pyimage1" doesn't exist`: the second root in a process was handed an
+    image built by the first, which had since been destroyed. ⚠ The product
+    makes one root per launch and would never have seen it — a suite, an
+    embedding application, or anything that reopens a window would.
+
+    ⭐ So the module hands out a FRESH image and the ROOT holds it, because
+    that is what the lifetime actually follows. Both halves are asserted here:
+    a second root works, and the images survive the call that set them.
+    """
+    from tsubasa.gui import branding as B
+
+    first = _tk_root()
+    try:
+        assert B.set_window_icon(first) is True
+        assert getattr(first, u"_tsubasa_icons", None), (
+            u"nothing holds the images, so Python frees them the moment "
+            u"set_window_icon returns and the title bar goes blank")
+    finally:
+        first.destroy()
+
+    # ⭐ THE REGRESSION ITSELF: a second interpreter, after the first is gone.
+    second = _tk_root()
+    try:
+        assert B.set_window_icon(second) is True, (
+            u"a second Tk root could not be given an icon — the images are "
+            u"being shared across interpreters again")
+        assert B.image(32, master=second) is not B.image(32, master=second), (
+            u"image() is handing back the same object, which is the cache "
+            u"that caused the regression")
+    finally:
+        second.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_window_carries_the_mark_and_so_do_its_dialogs(tmp_path):
+    u"""🚨 `default=True` IS THE WHOLE REASON THE SETTINGS WINDOW GETS ONE.
+
+    The first argument of `iconphoto` is `default`, and only when it is true
+    do toplevels created LATER inherit the icon. With it false the main window
+    is branded and every dialog is not, which reads as a bug rather than as a
+    choice — `BRANDING-SCOPE.md` §1 surface 5.
+    """
+    from tsubasa.gui import app as APP
+    from tsubasa.gui import branding as B
+
+    root = _tk_root()
+    try:
+        asked = []
+        real = root.iconphoto
+        root.iconphoto = lambda *a: asked.append(a) or real(*a)
+        assert B.set_window_icon(root) is True
+        assert asked, u"iconphoto was never called"
+        assert asked[0][0] is True, (
+            u"iconphoto(default=%r) — with it false, every dialog opens "
+            u"unbranded" % (asked[0][0],))
+        assert len(asked[0]) > 2, (
+            u"only one size was handed over, so Windows resamples it for the "
+            u"title bar, Alt-Tab and the taskbar instead of picking")
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_mark_is_in_the_header_and_in_the_EMPTY_table_only(tmp_path):
+    u"""⭐ RULED: *"needs to be somewhere very clean in the app itself"*, and
+    *"nothing distracting."*
+
+    So: the header bar always, and the empty table **only while it is empty**.
+    ⛔ The visibility is DERIVED from the tree's own children on every repaint,
+    not from a flag someone has to remember to clear — a boolean set at the
+    start of a run and unset at the end has two places to be wrong, and one of
+    them is a cancelled run.
+    """
+    from tsubasa.gui import app as APP
+
+    root, app = _app(tmp_path)
+    root.update()
+    try:
+        if app.mark_small is None:
+            pytest.skip(u"no icon available on this host")
+        assert app.mark_small.width() == 24
+        assert app.mark_big.width() == 128
+
+        # empty -> the big mark is placed
+        assert not app.tree.get_children()
+        app._repaint()
+        root.update_idletasks()
+        assert app.empty_mark.winfo_ismapped(), (
+            u"the empty table shows no mark at all")
+
+        # a row arrives -> it goes away
+        app.tree.insert(u"", u"end", text=u"✓", values=(u"1", u"a", u"b",
+                                                        u"c", u"d"))
+        app._repaint()
+        root.update_idletasks()
+        assert not app.empty_mark.winfo_ismapped(), (
+            u"the mark is still there with results on screen, competing with "
+            u"the thing the person came to read")
+
+        # and it comes back
+        app.tree.delete(*app.tree.get_children())
+        app._repaint()
+        root.update_idletasks()
+        assert app.empty_mark.winfo_ismapped()
+    finally:
+        root.destroy()
+
+
+def test_the_empty_state_mark_is_GENUINELY_fainter_and_not_pre_blended():
+    u"""⚠ *"Nothing distracting"* — and the first version simply used the
+    full-strength mark while the scope said *faded*. A claim in prose that the
+    pixels do not support is the same defect as any other false claim.
+
+    ⭐ TRANSLUCENT, NOT PRE-BLENDED ONTO THE THEME COLOUR. Compositing onto
+    `#15171b` at build time would bake this window's background into a file
+    that ships in the PACKAGE — so any application embedding tsubasa gets our
+    ground baked in, and changing the theme leaves a halo. Asserted on the
+    ALPHA channel, which is what distinguishes the two.
+    """
+    from tsubasa.gui import branding as B
+
+    PIL = pytest.importorskip(u"PIL.Image")
+    faint_path = B.icon_path(128, faint=True)
+    assert os.path.isfile(faint_path), (
+        u"%s is missing — it is DERIVED by packaging/make_icon.py" % faint_path)
+
+    full = PIL.open(B.icon_path(128)).convert("RGBA")
+    faint = PIL.open(faint_path).convert("RGBA")
+    assert full.size == faint.size
+
+    full_a = sum(full.split()[3].getdata())
+    faint_a = sum(faint.split()[3].getdata())
+    assert faint_a < full_a * 0.7, (
+        u"the faint variant carries %d alpha against %d — it is not fainter"
+        % (faint_a, full_a))
+    assert faint_a > 0, u"the faint variant is completely invisible"
+
+    # ⛔ Still translucent where the mark is absent: a pre-blended file would
+    # have alpha 255 everywhere, having painted the background in.
+    assert min(faint.split()[3].getdata()) == 0, (
+        u"the faint mark has no transparent pixels at all, so it was blended "
+        u"onto a background colour rather than made translucent")
+
+
+def test_the_ico_exists_and_is_genuinely_MULTI_SIZE():
+    u"""🚨 THE `.ico` IS WHAT EXPLORER, THE TASKBAR AND ALT-TAB READ, and it
+    is a different mechanism from the window icon entirely — a Win32 resource
+    compiled into the executable and read **before Python starts.** A frozen
+    app with `iconphoto` set still shows PyInstaller's default without it.
+
+    ⛔ And a single-size `.ico` is the failure that looks like success:
+    Windows accepts it and resamples 256 down to 16, which is mush at exactly
+    the size people see most.
+    """
+    from tsubasa.gui import branding as B
+
+    path = B.ico_path()
+    assert os.path.isfile(path), (
+        u"%s is missing — it is DERIVED from the shipped PNGs by "
+        u"packaging/make_icon.py, not a separate asset" % path)
+    PIL = pytest.importorskip(u"PIL.Image")
+    with PIL.open(path) as ico:
+        sizes = sorted(set(w for w, _h in ico.info.get(u"sizes", ())))
+    for want in (16, 32, 48, 256):
+        assert want in sizes, (
+            u"the .ico carries %s and is missing %d" % (sizes, want))
+
+
 def _descendants(widget):
     u"""Every widget under `widget`, itself included. -> [widget]
 

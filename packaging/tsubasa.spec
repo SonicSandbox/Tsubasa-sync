@@ -47,6 +47,33 @@ from PyInstaller.utils.hooks import collect_all
 
 HERE = os.path.abspath(SPECPATH)                          # noqa: F821
 
+# ===========================================================================
+# 🚨 THE EXECUTABLE'S ICON IS A WIN32 RESOURCE, NOT THE WINDOW'S ICON
+# ===========================================================================
+#
+# `gui/branding.set_window_icon` handles the title bar, Alt-Tab and the
+# taskbar button — at runtime, from PNGs inside the package. ⛔ It does
+# NOTHING for what Explorer, the Start menu, a pinned shortcut and the file's
+# own properties show, because that image is compiled into the binary and is
+# read before Python starts. A frozen app with only `iconphoto` set still
+# shows PyInstaller's default.
+#
+# ⭐ RESOLVED THROUGH THE INSTALLED PACKAGE, never from this directory. The
+# freeze runs against the built wheel (that is the whole point of building
+# from one), so the icon has to come from where the wheel put it — and any
+# other application freezing tsubasa gets the same path for free.
+#
+# ⚠ NEVER FATAL. An icon that cannot be found is a plainer executable; it is
+# not a reason for the build to stop, and `smoke_standalone.py` asserts the
+# icon separately rather than trusting this to have worked.
+try:
+    from tsubasa.gui import branding as _branding
+    ICON = _branding.ico_path()
+    if not os.path.isfile(ICON):
+        ICON = None
+except Exception:                                         # noqa: BLE001
+    ICON = None
+
 # ⭐ COLLECTED, NOT DECLARED. `tkinterdnd2` carries a Tcl package that is
 # loaded by PATH at runtime, not imported, so an ordinary hidden-import is
 # not enough — `STANDALONE-BUILD-SCOPE.md` trap 4. It is OPTIONAL: `gui/app.py`
@@ -157,6 +184,7 @@ cli_exe = EXE(                                            # noqa: F821
     argv_emulation=False,
     codesign_identity=None,
     entitlements_file=None,
+    icon=ICON,
 )
 
 gui_exe = EXE(                                            # noqa: F821
@@ -178,6 +206,7 @@ gui_exe = EXE(                                            # noqa: F821
     argv_emulation=False,
     codesign_identity=None,
     entitlements_file=None,
+    icon=ICON,
 )
 
 # ⭐ ONE COLLECT, BOTH EXECUTABLES. This is trap 1's fix, expressed as a

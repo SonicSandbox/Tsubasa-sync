@@ -1548,6 +1548,61 @@ to `#171920`, which nobody can see.
 
 ---
 
+## Step 4e — ✅ The logo, everywhere it belongs — DONE 2026-09-17
+
+**surfaces:** `ui` `delivery` · **depends on:** 3d, 4c, 4d · **authority:**
+⭐ **`BRANDING-SCOPE.md`, which is the whole step** — written before any of it
+was implemented, on Sonic's instruction: *"I need you to a separate scope and
+implementation… All required places, ensure you've scoped those out."*
+
+⛔ **THE POINT OF THE SCOPE IS THAT THESE ARE FIVE DIFFERENT MECHANISMS.** A
+logo dropped in one place appears in none of the others, and *"the icon is
+set"* is five separate claims:
+
+| Surface | Reads | Built |
+| --- | --- | --- |
+| title bar · Alt-Tab · taskbar **button** | Tk `iconphoto` | `gui/branding.set_window_icon`, PNGs in the package |
+| the **`.exe`** in Explorer, the Start menu, a pinned shortcut, file properties | a **Win32 resource compiled into the binary**, read *before Python starts* | `packaging/make_icon.py` → `tsubasa/data/tsubasa.ico`, `icon=` on both `EXE` objects |
+| inside the app | two `PhotoImage`s | 24 px in the header bar; **128 px faint in the empty table, gone the moment a row arrives** |
+| the GitHub README **and the PyPI page** | the same `README.md` | an **absolute** `raw.githubusercontent` URL |
+| the settings window | inherits, but only via `iconphoto(default=True)` | the flag, deliberately |
+
+### 🚨 The regression this step caused, and what it taught
+
+**A `PhotoImage` belongs to the Tk interpreter that created it.** The first
+design cached images in the module for the life of the process — and broke
+**eighteen checks at once** with `TclError: image "pyimage1" doesn't exist`:
+the second root in a process was handed an image built by the first, which had
+since been destroyed. ⚠ **The product makes one root per launch and would never
+have seen it**; a suite, an embedding application, or anything that reopens a
+window would. ⭐ The module now hands out a fresh image and **the caller holds
+it** — `App` keeps its marks, `set_window_icon` stashes its list on the root —
+because that is what the lifetime actually follows.
+
+### ⭐ Three things the scope got right before the code existed
+
+1. **`pyproject.toml`, the hook's `DATA_PATTERNS` and the real contents of
+   `tsubasa/data/` must agree**, and `tests/test_packaging.py` reads the hook's
+   syntax tree to enforce it. ⭐ The PNGs were added first **so the guard could
+   fire** — and it did, naming both files to fix in its failure message.
+2. **PyPI does not resolve repository-relative paths.** ⚠ And the first URL
+   pinned to `v0.1.4` — which looked more careful and was simply broken, since
+   these assets do not exist at that tag. `main` always resolves.
+3. **A decorative asset may not be load-bearing.** Every path returns None
+   rather than raising; a missing icon is a plainer window.
+
+⚠ **And one claim the prose made that the pixels did not support:** the scope
+said the empty-state mark was *faded* while the code used the full-strength
+one. Now derived as a genuinely **translucent** variant — alpha reduced, ⛔ not
+pre-blended onto `#15171b`, because baking this window's background into a file
+that ships in the **package** would hand every embedding application our
+ground.
+
+**Green:** `gui` **120 checks**. Assets: 8 PNGs + a 7-size `.ico`, **73 KB** in
+the package; the masters and the wordmark are clone-only in `docs/brand/`.
+
+---
+
 ## Step 4b — Rust ⏸
 
 Unjustified: B1 runs at 49 ms/pair in numpy, measured. Revisit only if B5 misses its target on the

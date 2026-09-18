@@ -251,10 +251,177 @@ def check_the_build(app, expect_version):
     print(u"       cold start to a printed --help: %.2f s"
           % (time.time() - started))
 
+    check_the_executables_carry_the_icon(app, cli, gui)
     check_the_table_RESOLVES_a_name(inside)
     check_the_data_check_can_fail(app, cli, inside)
     check_the_gui_executable_actually_runs(gui)
     return cli, gui
+
+
+def check_the_executables_carry_the_icon(app, cli, gui):
+    u"""🚨 THE `.exe` ICON IS A WIN32 RESOURCE, AND IT IS NOT THE WINDOW ICON.
+
+    `gui/branding.set_window_icon` brands the title bar, Alt-Tab and the
+    taskbar BUTTON at runtime. ⛔ It does nothing for what Explorer, the Start
+    menu, a pinned shortcut and the file's own properties show — that image is
+    compiled into the binary and read before Python starts. A frozen app with
+    only `iconphoto` set still shows PyInstaller's default there, and looks
+    unbranded in the one place a person meets it first.
+
+    ⭐ Asserted by reading the binary's own RT_GROUP_ICON resource, not by
+    trusting that `icon=` was passed. `BRANDING-SCOPE.md` §1: five surfaces,
+    five mechanisms, five separate claims.
+    """
+    print(u"\n2f. and the executables carry the mark")
+    inside = os.path.join(app, u"_internal", u"tsubasa", u"data",
+                          u"tsubasa.ico")
+    check(u"the .ico travelled into the bundle",
+          os.path.isfile(inside) and os.path.getsize(inside) > 10000, inside)
+
+    if os.name != "nt":
+        return skip(u"the .exe icon resources", u"Win32 resources are Windows")
+    for name, exe in ((u"tsubasa.exe", cli), (u"tsubasa-gui.exe", gui)):
+        # ⛔ A CHECK MAY NOT TAKE THE RUN DOWN. The first version of
+        # `_has_icon` had wrong ctypes argtypes and raised `OverflowError`
+        # out of `FreeLibrary` — which killed the whole smoke test, so the
+        # media half, the licences and the summary never ran. Same shape an
+        # adversary already found in §2c: an instrument that can crash its
+        # own host reports nothing about anything.
+        try:
+            carried = _has_icon(exe)
+            why = exe
+        except Exception as exc:                          # noqa: BLE001
+            carried = False
+            why = u"%s could not be read: %s: %s" % (exe, type(exc).__name__,
+                                                     exc)
+        check(u"%s carries an icon resource" % name, carried, why)
+
+        # =================================================================
+        # 🚨 AND IT IS **OUR** ICON, NOT PyInstaller's DEFAULT
+        # =================================================================
+        # ⛔ *"Carries an icon resource"* is true of the default too — every
+        # PyInstaller build has one — so on its own that check cannot fail
+        # for the thing it is named after. It is the third check today with
+        # that shape. ⭐ The RT_ICON payloads are copied verbatim out of the
+        # `.ico`, so the proof is that the bytes in the binary are bytes
+        # that are in our file.
+        try:
+            ours = io.open(inside, "rb").read() if os.path.isfile(inside) \
+                else b""
+            mine = _icon_bytes(exe)
+            shared = bool(mine) and bool(ours) and mine in ours
+        except Exception as exc:                          # noqa: BLE001
+            shared, mine = False, b""
+            print(u"       (icon compare failed: %s)" % exc)
+        check(u"%s shows OUR mark, not PyInstaller's default" % name,
+              shared,
+              u"the %d bytes of its largest icon are not in tsubasa.ico"
+              % len(mine or b""))
+
+
+def _has_icon(exe):
+    u"""-> True if the PE file has a non-empty RT_GROUP_ICON resource.
+
+    ⚠ Read straight out of the binary with the Windows resource APIs, which
+    is what Explorer itself does. PyInstaller writes a default icon when none
+    is given, so *"an icon exists"* is not enough on its own — the SIZE of the
+    group is what separates a real multi-entry group from a placeholder.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    # 🚨 EVERY `argtypes` AND `restype` IS DECLARED, and that is not tidiness.
+    # Without them ctypes marshals a 64-bit HMODULE as a C `int` and the call
+    # dies with `OverflowError: int too long to convert` — which is what the
+    # first version did, on a binary that had the icon all along.
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, wintypes.HANDLE,
+                                   wintypes.DWORD]
+    k32.LoadLibraryExW.restype = wintypes.HMODULE
+    k32.FindResourceW.argtypes = [wintypes.HMODULE, wintypes.LPCWSTR,
+                                  wintypes.LPCWSTR]
+    k32.FindResourceW.restype = wintypes.HRSRC
+    k32.SizeofResource.argtypes = [wintypes.HMODULE, wintypes.HRSRC]
+    k32.SizeofResource.restype = wintypes.DWORD
+    k32.FreeLibrary.argtypes = [wintypes.HMODULE]
+    k32.FreeLibrary.restype = wintypes.BOOL
+
+    def as_resource(number):
+        u"""`MAKEINTRESOURCE` — an integer smuggled through a string pointer,
+        which is how the Win32 resource APIs have always taken numeric ids."""
+        return ctypes.cast(ctypes.c_void_p(number), wintypes.LPCWSTR)
+
+    LOAD_LIBRARY_AS_DATAFILE = 0x00000002
+    RT_GROUP_ICON = 14
+    module = k32.LoadLibraryExW(exe, None, LOAD_LIBRARY_AS_DATAFILE)
+    if not module:
+        return False
+    try:
+        # ⚠ The group is conventionally named `1`; PyInstaller writes it there.
+        for name in (as_resource(1), as_resource(2)):
+            found = k32.FindResourceW(module, name,
+                                      as_resource(RT_GROUP_ICON))
+            if found and k32.SizeofResource(module, found) > 0:
+                return True
+        return False
+    finally:
+        k32.FreeLibrary(module)
+
+
+def _icon_bytes(exe):
+    u"""-> the largest RT_ICON payload in `exe`, as bytes.
+
+    ⭐ The one thing that tells our mark from PyInstaller's default. A
+    resource being PRESENT proves nothing — every frozen binary has one — so
+    the payload is pulled out and compared against the `.ico` we shipped.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, wintypes.HANDLE,
+                                   wintypes.DWORD]
+    k32.LoadLibraryExW.restype = wintypes.HMODULE
+    k32.FindResourceW.argtypes = [wintypes.HMODULE, wintypes.LPCWSTR,
+                                  wintypes.LPCWSTR]
+    k32.FindResourceW.restype = wintypes.HRSRC
+    k32.LoadResource.argtypes = [wintypes.HMODULE, wintypes.HRSRC]
+    k32.LoadResource.restype = wintypes.HGLOBAL
+    k32.LockResource.argtypes = [wintypes.HGLOBAL]
+    k32.LockResource.restype = ctypes.c_void_p
+    k32.SizeofResource.argtypes = [wintypes.HMODULE, wintypes.HRSRC]
+    k32.SizeofResource.restype = wintypes.DWORD
+    k32.FreeLibrary.argtypes = [wintypes.HMODULE]
+
+    def as_resource(number):
+        return ctypes.cast(ctypes.c_void_p(number), wintypes.LPCWSTR)
+
+    RT_ICON = 3
+    module = k32.LoadLibraryExW(exe, None, 0x00000002)
+    if not module:
+        return b""
+    best = b""
+    try:
+        # ⚠ Ids are 1..N for a single group; walking a generous range is
+        # cheaper and more robust than enumerating with a callback.
+        for i in range(1, 32):
+            found = k32.FindResourceW(module, as_resource(i),
+                                      as_resource(RT_ICON))
+            if not found:
+                continue
+            size = k32.SizeofResource(module, found)
+            handle = k32.LoadResource(module, found)
+            if not handle or not size:
+                continue
+            ptr = k32.LockResource(handle)
+            if not ptr:
+                continue
+            blob = ctypes.string_at(ptr, size)
+            if len(blob) > len(best):
+                best = blob
+    finally:
+        k32.FreeLibrary(module)
+    return best
 
 
 def check_the_table_RESOLVES_a_name(table):

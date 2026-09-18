@@ -105,7 +105,13 @@ include = ["tsubasa*"]
 # asserts the files are present and non-trivial, and the CI workflow builds a
 # wheel and looks inside it. A comment here would not have caught it.
 [tool.setuptools.package-data]
-tsubasa = ["data/*.tsv.gz", "data/*.json"]
+# ⚠ KEEP IN STEP WITH `tsubasa/__pyinstaller/hook-tsubasa.py`'s DATA_PATTERNS.
+# This line decides what is in the WHEEL; that one decides what survives
+# FREEZING; `tests/test_packaging.py` fails when either drifts from the real
+# contents of `tsubasa/data/`. The `.png`/`.ico` entries are the application
+# icon — the window's title bar, the taskbar and the in-app marks all read
+# them at runtime, so they must survive `pip install`.
+tsubasa = ["data/*.tsv.gz", "data/*.json", "data/*.png", "data/*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

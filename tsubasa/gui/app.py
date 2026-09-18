@@ -51,6 +51,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
+from . import branding as _branding
 from . import folderpick as _folderpick
 from . import run as _run
 from . import settings as _settings
@@ -369,6 +370,17 @@ class App(object):
         inner = tk.Frame(bar, bg=PANEL)
         inner.pack(fill=u"x", padx=S.px(12), pady=S.px(10))
 
+        # ⭐ THE MARK, FAR LEFT — where an application's identity lives, and
+        # the one place it is always visible without competing with a control.
+        # ⚠ Held on `self`, because Tk keeps no reference to an image and a
+        # collected `PhotoImage` leaves the label pointing at nothing, with no
+        # error. ⛔ And it is never load-bearing: `image()` returns None rather
+        # than raising, and the bar simply starts at `Folder`.
+        self.mark_small = _branding.image(24)
+        if self.mark_small is not None:
+            tk.Label(inner, image=self.mark_small, bg=PANEL).pack(
+                side=u"left", padx=(0, S.px(10)))
+
         tk.Label(inner, text=u"Folder", bg=PANEL, fg=DIM,
                  font=F[u"small"]).pack(side=u"left", padx=(0, S.px(8)))
         self.folder_var = tk.StringVar()
@@ -430,6 +442,18 @@ class App(object):
         bar.config(command=self.tree.yview)
         bar.pack(side=u"right", fill=u"y")
         self.tree.pack(side=u"left", fill=u"both", expand=True)
+
+        # ⭐ THE EMPTY STATE. A table with nothing in it is otherwise a large
+        # blank rectangle; the mark fills it, faded, and **goes away the
+        # moment there is a row to read** — so it is never competing with the
+        # thing the person came for. `_repaint` owns that, off `self.rows`.
+        # ⚠ `place` rather than `pack`, deliberately: it floats OVER the
+        # tree's own area without taking space from it, so the table's
+        # geometry is identical whether the mark is there or not.
+        self.mark_big = _branding.image(128, faint=True)
+        self.empty_mark = None
+        if self.mark_big is not None:
+            self.empty_mark = tk.Label(holder, image=self.mark_big, bg=BG)
 
         self.tree.heading(u"#0", text=u"")
         self.tree.column(u"#0", width=S.px(36), stretch=False,
@@ -774,8 +798,25 @@ class App(object):
         # *every displayed value derives from the state on every render.*
         if bool(self.dry_var.get()) != bool(self.settings.get(u"dry_run")):
             self.dry_var.set(bool(self.settings.get(u"dry_run")))
+        self._paint_empty_state()
         self._paint_detail()
         self._paint_footer()
+
+    def _paint_empty_state(self):
+        u"""The mark is visible only while the table has nothing in it.
+
+        ⭐ DERIVED FROM THE TREE, not from a flag someone has to remember to
+        clear. `doctrine/architecture`: *every displayed value derives from
+        the state on every render* — a boolean set at the start of a run and
+        unset at the end has two places to be wrong, and one of them is a
+        cancelled run.
+        """
+        if self.empty_mark is None:
+            return
+        if self.tree.get_children():
+            self.empty_mark.place_forget()
+        else:
+            self.empty_mark.place(relx=0.5, rely=0.42, anchor=u"center")
 
     def _paint_detail(self):
         selected = self.selected_row()
@@ -1194,6 +1235,12 @@ def make_root():
     awareness = make_process_dpi_aware()
     root = _dnd_root_or_plain()
     _make_failures_visible(root)
+    # ⭐ The title bar, Alt-Tab and the taskbar button. ⛔ NOT the .exe's own
+    # icon — that is a Win32 resource compiled into the binary and read before
+    # Python starts (`packaging/make_icon.py`). Setting one is not setting the
+    # other, and a frozen app with only this shows PyInstaller's default in
+    # Explorer.
+    _branding.set_window_icon(root)
     return root, awareness
 
 

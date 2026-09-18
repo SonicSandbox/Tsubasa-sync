@@ -1,4 +1,26 @@
-# tsubasa
+<!--
+  ⚠ AN ABSOLUTE URL, BECAUSE THIS FILE IS ALSO THE PyPI PAGE.
+  `pyproject.toml` sets `readme = "README.md"`, and PyPI does not resolve
+  repository-relative paths — `docs/brand/…` renders perfectly on GitHub and
+  as a broken image there.
+
+  ⚠ `main`, NOT a tag, and that was a correction. Pinning to `v0.1.4` looked
+  more careful and was simply broken: these assets did not exist at that tag,
+  so the image would have 404'd on every PyPI page. A tag can only be used
+  once the tag contains the file. `main` always resolves and always shows the
+  current mark, which for a logo is the behaviour you want; the cost is that
+  moving this file breaks older PyPI pages, so it does not move.
+
+  ⚠ The `original` variant deliberately: GitHub renders READMEs on both light
+  and dark themes, and it is the one that works on either. The `dark` and
+  `wordmark` variants are for light backgrounds only.
+-->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/SonicSandbox/Tsubasa-sync/main/docs/brand/tsubasa-original-512.png"
+       alt="tsubasa" width="140" height="140">
+</p>
+
+<h1 align="center">tsubasa</h1>
 
 **Works out which subtitle belongs to which video — however differently the two are named — then retimes it to match.**
 
