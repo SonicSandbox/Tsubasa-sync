@@ -51,6 +51,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
+from . import folderpick as _folderpick
 from . import run as _run
 from . import settings as _settings
 from .scale import Scale, make_process_dpi_aware
@@ -85,6 +86,110 @@ ACCENT = u"#6aa8d8"
 
 MARK = {_run.CONFIDENT: u"✓", _run.REFUSED: u"✗", _run.ERROR: u"!"}
 COLOUR = {_run.CONFIDENT: OK, _run.REFUSED: BAD, _run.ERROR: ERR}
+
+#: Where the credit line points. ⛔ One place, because it is rendered in the
+#: window AND opened in a browser, and two copies is one you can change and
+#: leave stale.
+HOME_URL = u"https://github.com/SonicSandbox/Tsubasa-sync"
+
+# ---------------------------------------------------------------------------
+# ⭐ interaction — the one thing a dark UI cannot skip
+# ---------------------------------------------------------------------------
+#
+# `doctrine/architecture`: a control that does not answer the pointer reads as
+# disabled. On a dark ground the answer has to be a LIFT, not a tint — a hue
+# shift on hover looks like a state change ("did I just turn something on?"),
+# while a small lightening reads as *this is live* and nothing else.
+#
+# ⚠ The amounts are small on purpose. 10% up on hover and 8% down on press is
+# about the smallest step that is unambiguous at a glance, and anything
+# louder becomes the distraction the brief ruled out.
+
+HOVER_LIFT = 0.10
+PRESS_SINK = 0.08
+
+
+def _shade(colour, amount):
+    u"""Move a `#rrggbb` toward white (amount > 0) or black (< 0). -> unicode
+
+    ⭐ TOWARD THE EXTREME, not a multiply. Scaling each channel by `1 + amount`
+    leaves a near-black ground almost unmoved — `#15171b` lifted 10% is
+    `#171920`, which nobody can see — because the step is proportional to a
+    value that is already tiny. Interpolating toward white gives every colour
+    the same *perceptual* step regardless of where it started.
+    """
+    colour = colour.lstrip(u"#")
+    parts = [int(colour[i:i + 2], 16) for i in (0, 2, 4)]
+    target = 255 if amount >= 0 else 0
+    weight = abs(amount)
+    return u"#%02x%02x%02x" % tuple(
+        int(round(c + (target - c) * weight)) for c in parts)
+
+
+def _luma(colour):
+    u"""Perceived brightness of `#rrggbb`, 0.0–1.0. -> float
+
+    ⚠ ITU-R BT.601 weights, not the mean. Green carries most of the perceived
+    light and blue almost none, so a flat average calls this window's accent
+    blue *brighter* than it looks and picks the wrong hover direction for it.
+    """
+    colour = colour.lstrip(u"#")
+    r, g, b = (int(colour[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _hover_of(colour):
+    u"""What `colour` becomes under the pointer. -> unicode
+
+    ⭐ DIRECTION FOLLOWS THE SURFACE, which is what every current UI does and
+    what *good taste of modern UI design* actually means here: a dark, recessed
+    control LIFTS toward the light, and a bright filled control DEEPENS. Both
+    read as *pressed toward you*; doing the same thing to both does not.
+
+    ⚠ MEASURED, and this is why it is not one rule: lifting the accent
+    `#6aa8d8` by 10% gives `#79b1dc` — a 15/255 step on an already-bright fill,
+    invisible in a screenshot — while lifting the dark `#2b3038` gives
+    `#43474e`, which is obvious. The same number is a different amount of
+    signal depending on where it starts.
+    """
+    if _luma(colour) >= 0.5:
+        return _shade(colour, -PRESS_SINK)
+    return _shade(colour, HOVER_LIFT)
+
+
+def _interactive(widget, base, fg=None):
+    u"""Give a widget a hover and a press state. -> the widget
+
+    ⛔ `activebackground` IS NOT A HOVER. Tk's `active` state is the PRESSED
+    state for a Button; the widget was built with `activebackground=bg`, so
+    pressing changed nothing and hovering changed nothing either — every
+    button in the window was visually inert under the pointer.
+
+    ⚠ The bindings read the widget's CURRENT background rather than closing
+    over the one passed in, because the Sync button legitimately changes
+    colour when a run starts (Sync → Stop, accent → red). A closure would
+    restore the wrong colour on leave, which is worse than no hover at all.
+    """
+    widget.configure(activebackground=_shade(base, -PRESS_SINK))
+    if fg is not None:
+        widget.configure(activeforeground=fg)
+
+    def enter(_e):
+        if str(widget.cget(u"state")) == u"disabled":
+            return
+        widget._resting = widget.cget(u"bg")
+        widget.configure(bg=_hover_of(widget._resting))
+
+    def leave(_e):
+        resting = getattr(widget, u"_resting", None)
+        if resting:
+            widget.configure(bg=resting, activebackground=_shade(
+                resting, -PRESS_SINK))
+            widget._resting = None
+
+    widget.bind(u"<Enter>", enter, add=u"+")
+    widget.bind(u"<Leave>", leave, add=u"+")
+    return widget
 
 #: How often the window asks the runner what has arrived. ⚠ Milliseconds of
 #: wall clock, not a pixel count -- it does NOT go through `px()`.
@@ -143,6 +248,22 @@ class App(object):
         style.configure(u"T.Treeview.Heading", background=PANEL,
                         foreground=DIM, relief=u"flat", font=F[u"small"],
                         padding=S.px(6))
+        # 🚨 THE HEADINGS TURNED **WHITE** UNDER THE POINTER, in a dark window.
+        # `configure` sets the resting look and says nothing about any state,
+        # so clam's own `active` and `pressed` maps were still in force — and
+        # clam is a LIGHT theme, so its active background is near-white. The
+        # column titles flashed white on a #1c1f25 panel every time the mouse
+        # crossed them.
+        # ⭐ The fix is a map, not a different colour: the heading lifts by the
+        # same step every other control uses, and its text brightens DIM → INK
+        # so the feedback reads as *this is live* rather than as a selection.
+        # ⚠ `pressed` is mapped too — a heading here sorts nothing, so it must
+        # not look like it just did something.
+        style.map(u"T.Treeview.Heading",
+                  background=[(u"pressed", _shade(PANEL, HOVER_LIFT)),
+                              (u"active", _shade(PANEL, HOVER_LIFT))],
+                  foreground=[(u"pressed", INK), (u"active", INK)],
+                  relief=[(u"pressed", u"flat"), (u"active", u"flat")])
         # 🚨 THE SELECTION MAY NOT ERASE THE OUTCOME COLOUR. clam maps
         # `foreground` on `selected`, which overrode the row's tag — so the
         # REFUSED row, the one the eye lands on, rendered plain white while
@@ -167,6 +288,11 @@ class App(object):
         # test.
         self._build_bar()
         tk.Frame(self.root, bg=EDGE, height=S.px(1)).pack(fill=u"x")
+        # ⚠ THE CREDIT CLAIMS THE BOTTOM FIRST, so the counts strip packed
+        # next sits ABOVE it. `side="bottom"` gives the LAST-packed widget
+        # the position nearest the middle, which reads backwards and is
+        # exactly the ordering trap the note above was written about.
+        self._build_credit()
         self._build_footer()
         tk.Frame(self.root, bg=EDGE,
                  height=S.px(1)).pack(fill=u"x", side=u"bottom")
@@ -361,6 +487,49 @@ class App(object):
                                  font=F[u"ui"])
         self.tail_lbl.pack(side=u"right", padx=(0, S.px(16)))
 
+    def _build_credit(self):
+        u"""`Created by SonicSandbox | GitHub`, bottom right, faded.
+
+        ⭐ RULED 2026-09-17: *"bottom right in faded text so its not in the
+        way but there."* So it is `DIM` on the window ground rather than on
+        the counts panel, a size down, and it sits BELOW the counts strip —
+        the counts are the thing being read, this is the thing being noticed
+        once.
+
+        ⚠ The link is a `Label`, not a `Button`: a button draws a box, and a
+        box in the corner of every screenshot is exactly the distraction that
+        was ruled out. It gets the hand cursor and an underline on hover, so
+        it still announces itself as clickable — `doctrine/architecture`: a
+        control that does not answer the pointer reads as decoration.
+        """
+        S, F = self.scale, self.fonts
+        strip = tk.Frame(self.root, bg=BG)
+        strip.pack(fill=u"x", side=u"bottom")
+        row = tk.Frame(strip, bg=BG)
+        row.pack(side=u"right", padx=S.px(14), pady=(0, S.px(6)))
+
+        #: ⚠ A size below the small font and dimmer than DIM. Measured against
+        #: the brief — *not in the way* — rather than chosen by feel.
+        faint = _shade(DIM, -0.35)
+        self.credit_lbl = tk.Label(row, text=u"Created by SonicSandbox",
+                                   bg=BG, fg=faint, font=F[u"tiny"])
+        self.credit_lbl.pack(side=u"left")
+        tk.Label(row, text=u"|", bg=BG, fg=_shade(faint, -0.25),
+                 font=F[u"tiny"]).pack(side=u"left", padx=S.px(6))
+        self.github_lbl = _link(row, F[u"tiny"], u"GitHub", HOME_URL,
+                                self._open_url)
+        self.github_lbl.pack(side=u"left")
+
+    def _open_url(self, url):
+        u"""⛔ NEVER FATAL, and never a traceback. A windowed build has no
+        stream to print one on, and a browser that will not start is not a
+        reason for the window to do anything at all."""
+        import webbrowser
+        try:
+            webbrowser.open(url)
+        except Exception as exc:                          # noqa: BLE001
+            self._say(u"could not open %s: %s" % (url, exc))
+
     def _arm_drop_target(self):
         u"""⭐ RULED: *auto-run on drop unless setting is toggled.*"""
         self.drop_armed = False
@@ -413,9 +582,47 @@ class App(object):
             self.start()
 
     def browse(self):
-        chosen = filedialog.askdirectory(title=u"Pick a folder of videos")
+        u"""Ask for a folder. ⛔ THE DIALOG IS OWNED, AND IT STARTS SOMEWHERE.
+
+        🚨 *"it has the thinking icon, the gui freezes, it feels
+        discontinued."* Measured 2026-09-17, and the app is **not** frozen:
+        29 `after()` ticks ran during 3.4 s of dialog and `IsHungAppWindow`
+        stayed False throughout. ⛔ So no amount of threading was ever the fix
+        — and it could not have been, since a native modal must pump messages
+        on the thread that owns its parent.
+
+        Three things were actually wrong, and all three are here:
+
+          1. **The dialog had no owner.** Windows could not dim or block the
+             right window, so the app sat there looking live and ignoring
+             clicks. `parent` is now the real window handle.
+          2. **It started nowhere**, so it walked the whole shell namespace
+             with a wait cursor — the *"thinking icon"*. It now opens on the
+             folder already in the box.
+          3. **It was the 2001 dialog** (`folderpick`, measured: window class
+             `#32770`). The modern picker is tried first and falls back.
+
+        ⚠ The busy cursor is set DELIBERATELY and `update_idletasks()` forces
+        it to paint before the modal opens — a cursor change queued behind a
+        blocking call arrives after the thing it was meant to explain.
+        """
+        start = (self.folder_var.get() or u"").strip()
+        if not os.path.isdir(start):
+            start = u""
+        try:
+            self.root.configure(cursor=u"watch")
+            self.root.update_idletasks()
+            chosen = _folderpick.ask(parent=self.root.winfo_id(),
+                                     title=u"Pick a folder of videos",
+                                     start=start)
+        finally:
+            # ⛔ RESTORED IN A `finally`. A window left holding the busy
+            # cursor is the exact complaint this method exists to answer, and
+            # the dialog can raise.
+            self.root.configure(cursor=u"")
         if chosen:
             self.folder_var.set(chosen)
+            self._folder_typed()
 
     def toggle_run(self):
         if self.running:
@@ -776,12 +983,35 @@ def _fit(text, font, pixels):
 
 def _button(parent, S, F, label, bg, fg, command, pad=14):
     b = tk.Button(parent, text=label, bg=bg, fg=fg, font=F[u"ui_b"],
-                  relief=u"flat", command=command, activebackground=bg,
-                  activeforeground=fg, borderwidth=0,
+                  relief=u"flat", command=command, borderwidth=0,
                   highlightthickness=0, cursor=u"hand2",
                   disabledforeground=DIM)
+    _interactive(b, bg, fg)
     b.pack(side=u"right", padx=(S.px(8), 0), ipadx=S.px(pad), ipady=S.px(4))
     return b
+
+
+def _link(parent, font, label, url, opener):
+    u"""A text link: accent colour, UNDERLINED, hand cursor, brighter on hover.
+
+    ⭐ UNDERLINED AT REST, matching the reference Sonic gave — his example
+    renders the link word underlined, not underlined-on-approach. An earlier
+    draft underlined only on hover because it reads tidier; that is a
+    preference, and the reference is a requirement.
+
+    ⚠ The hover is then a BRIGHTEN rather than a rule appearing, because the
+    underline is already spent as an affordance. Every interactive thing in
+    this window answers the pointer with the same lift.
+    """
+    under = tkfont.Font(font=font)
+    under.configure(underline=1)
+    lbl = tk.Label(parent, text=label, bg=parent.cget(u"bg"), fg=ACCENT,
+                   font=under, cursor=u"hand2")
+    lbl.bind(u"<Enter>", lambda _e: lbl.configure(
+        fg=_shade(ACCENT, HOVER_LIFT * 2)))
+    lbl.bind(u"<Leave>", lambda _e: lbl.configure(fg=ACCENT))
+    lbl.bind(u"<Button-1>", lambda _e: opener(url))
+    return lbl
 
 
 def _fonts():
@@ -789,6 +1019,9 @@ def _fonts():
         ui=tkfont.Font(family=u"Segoe UI", size=10),
         ui_b=tkfont.Font(family=u"Segoe UI", size=10, weight=u"bold"),
         small=tkfont.Font(family=u"Segoe UI", size=9),
+        #: ⚠ For the credit line only. A size below `small`, so it reads as
+        #: a footnote rather than as something the eye has to price in.
+        tiny=tkfont.Font(family=u"Segoe UI", size=8),
     )
 
 

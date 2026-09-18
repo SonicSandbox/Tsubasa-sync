@@ -908,6 +908,417 @@ def _raises():
     raise ValueError(u"a button blew up")
 
 
+def _descendants(widget):
+    u"""Every widget under `widget`, itself included. -> [widget]
+
+    ⭐ WALKED, NEVER ENUMERATED BY NAME. `LEDGER-HOT.md`: *a check that
+    hand-enumerates which keys to compare stops guarding every key added
+    later.* A button added to this window next month is covered by the hover
+    check without anyone remembering to come back here.
+    """
+    out = [widget]
+    for child in widget.winfo_children():
+        out.extend(_descendants(child))
+    return out
+
+
+# ===========================================================================
+# 🚨 INTERACTION — RUNBOOK 4d, and every one of these was a REPORTED defect
+# ===========================================================================
+#
+# Sonic, 2026-09-17: *"all buttons need a hover over color change… when you
+# click on browse it has the thinking icon, the gui freezes… when you hover
+# over the category headers they turn white. it looks bad."*
+#
+# ⭐ All three were invisible to 103 green checks, because every one of them
+# is about a STATE the suite never entered: the pointer being over something.
+
+def test_shade_LIFTS_a_near_black_ground_visibly(monkeypatch):
+    u"""🚨 A MULTIPLY WOULD NOT HAVE WORKED, and that is why this is a check.
+
+    Scaling each channel by `1 + amount` moves `#15171b` to `#171920` — a
+    step nobody can see — because it is proportional to a value that is
+    already almost zero. Interpolating toward white gives the same
+    perceptual step wherever it starts.
+    """
+    from tsubasa.gui import app as APP
+    from tsubasa.gui import app as APP
+
+    ground = APP._shade(APP.BG, APP.HOVER_LIFT)
+    assert ground != APP.BG
+    gap = min(int(ground[i:i + 2], 16) - int(APP.BG.lstrip(u"#")[i - 1:i + 1], 16)
+              for i in (1, 3, 5))
+    assert gap >= 12, (
+        u"a %s ground lifted to %s — %d/255 is not a visible hover"
+        % (APP.BG, ground, gap))
+
+    # ⛔ AND IT MUST NOT OVERSHOOT. A lift that saturates turns a subtle
+    # affordance into a flash.
+    for channel in (ground[1:3], ground[3:5], ground[5:7]):
+        assert int(channel, 16) <= 255
+
+    assert APP._shade(u"#ffffff", 0.10) == u"#ffffff", u"white cannot lift"
+    assert APP._shade(u"#000000", -0.10) == u"#000000", u"black cannot sink"
+
+
+def test_the_hover_direction_follows_the_SURFACE_not_one_rule():
+    u"""⭐ A dark recessed control LIFTS; a bright filled one DEEPENS.
+
+    Both read as *pressed toward you*, and doing the same thing to both does
+    not. ⚠ MEASURED, and it is why this is not one rule: lifting the accent
+    `#6aa8d8` by 10% gives `#79b1dc` — a 15/255 step on an already-bright
+    fill, which did not survive a screenshot — while the same 10% on the dark
+    `#2b3038` is obvious. The same number is a different amount of signal
+    depending on where it starts.
+
+    ⛔ Asserted over EVERY surface the theme defines, read off the module, so
+    a colour added later is covered without anyone coming back here.
+    """
+    from tsubasa.gui import app as APP
+
+    surfaces = [APP.BG, APP.PANEL, APP.EDGE, APP.SEL,
+                APP.ACCENT, APP.OK, APP.CUT, APP.BAD, APP.ERR]
+    for colour in surfaces:
+        hover = APP._hover_of(colour)
+        step = max(abs(int(hover[i:i + 2], 16)
+                       - int(colour.lstrip(u"#")[i - 1:i + 1], 16))
+                   for i in (1, 3, 5))
+        assert step >= 10, (
+            u"%s -> %s is a %d/255 step; nobody sees that" % (colour, hover,
+                                                              step))
+        lifted = APP._luma(hover) > APP._luma(colour)
+        assert lifted == (APP._luma(colour) < 0.5), (
+            u"%s (luma %.2f) went %s — a dark surface must lift and a bright "
+            u"one must deepen" % (colour, APP._luma(colour),
+                                  u"lighter" if lifted else u"darker"))
+
+    # ⚠ Green carries most of the perceived light and blue almost none, so a
+    # flat average picks the wrong direction for this window's accent.
+    assert APP._luma(u"#0000ff") < APP._luma(u"#00ff00")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_every_button_answers_the_pointer_and_puts_itself_back(tmp_path):
+    u"""🚨 REPORTED: *"all buttons need a hover over color change."*
+
+    ⛔ `activebackground=bg` is not a hover. Tk's `active` state is the
+    PRESSED state for a Button, and it was set to the resting colour anyway —
+    so the window's controls did not move under the pointer at all.
+
+    ⭐ Walks the real widgets rather than naming them, so a button added
+    later is covered without anyone remembering to come back here.
+    """
+    from tsubasa.gui import app as APP
+    import tkinter as tk
+    root, app = _app(tmp_path)
+    # ⚠ MAPPED FIRST. Tk does not deliver `<Enter>` to an unmapped
+    # widget and `winfo_rooty()` answers 0 for one, so a check that
+    # skipped this would report *"no hover"* and *"not at the
+    # bottom"* against a window that does both. `update_idletasks`
+    # is not enough — the window has to actually map.
+    root.update()
+    try:
+        buttons = [w for w in _descendants(root)
+                   if isinstance(w, tk.Button)]
+        assert len(buttons) >= 3, u"expected Browse, Sync and the gear: %r" % buttons
+        for b in buttons:
+            resting = b.cget(u"bg")
+            b.event_generate(u"<Enter>")
+            root.update_idletasks()
+            hovered = b.cget(u"bg")
+            assert hovered != resting, (
+                u"%r does not change under the pointer" % b.cget(u"text"))
+            b.event_generate(u"<Leave>")
+            root.update_idletasks()
+            assert b.cget(u"bg") == resting, (
+                u"%r kept its hover colour after the pointer left"
+                % b.cget(u"text"))
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_hover_reads_the_CURRENT_colour_not_the_one_it_was_built_with(
+        tmp_path):
+    u"""🚨 THE SYNC BUTTON LEGITIMATELY CHANGES COLOUR MID-RUN.
+
+    It goes accent → red and *Sync* → *Stop* while a run is going. A hover
+    that closed over the colour passed to the constructor would restore the
+    OLD one on leave — so hovering a running Stop button would quietly turn it
+    blue again, which is worse than no hover at all.
+    """
+    from tsubasa.gui import app as APP
+    root, app = _app(tmp_path)
+    # ⚠ MAPPED FIRST. Tk does not deliver `<Enter>` to an unmapped
+    # widget and `winfo_rooty()` answers 0 for one, so a check that
+    # skipped this would report *"no hover"* and *"not at the
+    # bottom"* against a window that does both. `update_idletasks`
+    # is not enough — the window has to actually map.
+    root.update()
+    try:
+        b = app.sync_btn
+        b.configure(bg=APP.BAD)          # as `_repaint` does mid-run
+        b.event_generate(u"<Enter>")
+        root.update_idletasks()
+        assert b.cget(u"bg") != APP.BAD
+        b.event_generate(u"<Leave>")
+        root.update_idletasks()
+        assert b.cget(u"bg") == APP.BAD, (
+            u"leaving restored %s, not the colour the button actually had"
+            % b.cget(u"bg"))
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_a_DISABLED_button_does_not_pretend_to_be_live(tmp_path):
+    u"""⚠ A disabled control that lights up under the pointer is a promise it
+    will not keep."""
+    from tsubasa.gui import app as APP
+    root, app = _app(tmp_path)
+    # ⚠ MAPPED FIRST. Tk does not deliver `<Enter>` to an unmapped
+    # widget and `winfo_rooty()` answers 0 for one, so a check that
+    # skipped this would report *"no hover"* and *"not at the
+    # bottom"* against a window that does both. `update_idletasks`
+    # is not enough — the window has to actually map.
+    root.update()
+    try:
+        b = app.sync_btn
+        b.configure(state=u"disabled")
+        resting = b.cget(u"bg")
+        b.event_generate(u"<Enter>")
+        root.update_idletasks()
+        assert b.cget(u"bg") == resting
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_column_headings_do_NOT_turn_white_under_the_pointer(tmp_path):
+    u"""🚨 REPORTED: *"it's a darkish theme, when you hover over the category
+    headers they turn white. it looks bad."*
+
+    ⛔ `style.configure` sets the RESTING look and says nothing about any
+    state, so clam's own `active` map was still in force — and clam is a
+    **light** theme, so its active background is near-white. The column
+    titles flashed white on a #1c1f25 panel on every pass of the mouse.
+
+    ⭐ Asserted as a BRIGHTNESS BOUND, not as an exact colour: the point is
+    *not white*, and pinning the hex would fail the next time the panel
+    colour is tuned.
+    """
+    from tsubasa.gui import app as APP
+    from tkinter import ttk
+    root, app = _app(tmp_path)
+    try:
+        style = ttk.Style(root)
+        mapped = dict((state[0], colour) for state, colour in
+                      [(s[:-1], s[-1]) for s in
+                       style.map(u"T.Treeview.Heading", u"background")])
+        assert u"active" in mapped, (
+            u"no `active` background is mapped, so clam's near-white default "
+            u"is still what the pointer produces: %r" % (mapped,))
+        hover = mapped[u"active"]
+        brightness = max(int(hover.lstrip(u"#")[i:i + 2], 16)
+                         for i in (0, 2, 4))
+        assert brightness < 110, (
+            u"the heading hover is %s — brightness %d/255 is a light flash in "
+            u"a dark window" % (hover, brightness))
+        # ⭐ And it must still be a VISIBLE answer, not merely not-white.
+        assert hover != APP.PANEL, u"the heading does not react at all"
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_credit_sits_at_the_very_bottom_right_and_links_out(tmp_path):
+    u"""⭐ RULED: *"at the very bottom include a 'Created by SonicSandbox'…
+    bottom right in faded text so its not in the way but there. And the
+    github link."*
+
+    ⚠ Asserted by GEOMETRY, not by existence — *at the very bottom* and
+    *bottom right* are the requirement, and a label that exists somewhere
+    else satisfies neither.
+    """
+    from tsubasa.gui import app as APP
+    root, app = _app(tmp_path)
+    # ⚠ MAPPED FIRST. Tk does not deliver `<Enter>` to an unmapped
+    # widget and `winfo_rooty()` answers 0 for one, so a check that
+    # skipped this would report *"no hover"* and *"not at the
+    # bottom"* against a window that does both. `update_idletasks`
+    # is not enough — the window has to actually map.
+    root.update()
+    try:
+        root.update_idletasks()
+        credit, link = app.credit_lbl, app.github_lbl
+        assert u"SonicSandbox" in credit.cget(u"text")
+
+        # below the counts strip -- the counts are what gets read, this is not
+        assert credit.winfo_rooty() > app.elapsed_lbl.winfo_rooty(), (
+            u"the credit is not below the counts strip")
+        # right half of the window
+        centre = root.winfo_rootx() + root.winfo_width() // 2
+        assert credit.winfo_rootx() > centre, u"the credit is not on the right"
+        # and the link sits after the name, not before it
+        assert link.winfo_rootx() > credit.winfo_rootx()
+
+        # ⚠ FADED, and measured against DIM rather than by eye: the brief is
+        # *not in the way*, so it must be quieter than the secondary text.
+        faded = max(int(credit.cget(u"fg").lstrip(u"#")[i:i + 2], 16)
+                    for i in (0, 2, 4))
+        secondary = max(int(APP.DIM.lstrip(u"#")[i:i + 2], 16)
+                        for i in (0, 2, 4))
+        assert faded < secondary, (
+            u"the credit (%s) is not quieter than DIM (%s)"
+            % (credit.cget(u"fg"), APP.DIM))
+
+        # ⭐ UNDERLINED AT REST. The reference Sonic gave renders the link
+        # word underlined; an earlier draft underlined only on hover because
+        # it reads tidier, which is a preference where the reference is a
+        # requirement.
+        import tkinter.font as tkfont
+        assert tkfont.Font(font=link.cget(u"font")).actual(u"underline"), (
+            u"the GitHub link is not underlined, so it does not look like a "
+            u"link until the pointer is already on it")
+        assert link.cget(u"cursor") == u"hand2"
+        assert link.cget(u"fg") == APP.ACCENT
+
+        opened = []
+        app._open_url = lambda url: opened.append(url)
+        link.bind(u"<Button-1>", lambda _e: app._open_url(APP.HOME_URL))
+        link.event_generate(u"<Button-1>")
+        root.update_idletasks()
+        assert opened == [APP.HOME_URL], opened
+        assert APP.HOME_URL.startswith(u"https://github.com/")
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_browse_owns_its_dialog_starts_somewhere_and_always_frees_the_cursor(
+        tmp_path):
+    u"""🚨 REPORTED: *"when you click on browse it has the thinking icon, the
+    gui freezes."*
+
+    ⚠ MEASURED, and it is NOT frozen: 29 `after()` ticks ran during 3.4 s of
+    dialog and `IsHungAppWindow` stayed False. ⛔ So threading was never the
+    fix — a native modal must pump messages on the thread owning its parent.
+    What was wrong: the dialog had **no owner**, so Windows could not block
+    the right window; and it started **nowhere**, so it walked the whole
+    shell namespace behind a wait cursor.
+
+    ⭐ The `finally` is the half worth checking: a window left holding the
+    busy cursor IS the reported complaint.
+    """
+    from tsubasa.gui import app as APP
+    root, app = _app(tmp_path)
+    try:
+        seen = {}
+
+        def fake_ask(parent=None, title=u"", start=u""):
+            seen.update(parent=parent, title=title, start=start,
+                        cursor=str(root.cget(u"cursor")))
+            return str(tmp_path)
+
+        monkey = APP._folderpick.ask
+        APP._folderpick.ask = fake_ask
+        try:
+            app.folder_var.set(str(tmp_path))
+            app.browse()
+        finally:
+            APP._folderpick.ask = monkey
+
+        assert seen[u"parent"] == root.winfo_id(), u"the dialog is not owned"
+        assert seen[u"start"] == str(tmp_path), u"it starts nowhere"
+        assert seen[u"cursor"] == u"watch", (
+            u"the busy cursor was never shown, so the wait is unexplained")
+        assert str(root.cget(u"cursor")) == u"", u"the cursor was left busy"
+
+        # ⛔ AND ON THE FAILING PATH. The dialog can raise; the cursor may not
+        # survive it.
+        def explodes(parent=None, title=u"", start=u""):
+            raise OSError(u"the shell is having a day")
+
+        APP._folderpick.ask = explodes
+        try:
+            with pytest.raises(OSError):
+                app.browse()
+        finally:
+            APP._folderpick.ask = monkey
+        assert str(root.cget(u"cursor")) == u"", (
+            u"a dialog that raised left the window holding the busy cursor")
+    finally:
+        root.destroy()
+
+
+def test_the_folder_picker_ALWAYS_falls_back_and_says_why(monkeypatch):
+    u"""⛔ `00-INDEX.md` Rule 1 in miniature: the modern picker is an
+    ACCELERATOR, never a dependency. Whatever COM does, the person gets a
+    dialog.
+
+    ⚠ And a silent fallback is an undiagnosable one — the first version
+    recorded a reason only when something RAISED, so a COM call that merely
+    returned a bad HRESULT dropped to the 2001 dialog with `LAST_REASON`
+    empty, and the probe reported *"no fallback reason"* over a legacy
+    dialog. A measurement that lies is worse than none.
+    """
+    from tsubasa.gui import folderpick as FP
+
+    called = []
+    monkeypatch.setattr(FP, "_classic",
+                        lambda title, start: called.append((title, start))
+                        or u"/fallback")
+
+    monkeypatch.setattr(FP, "_modern",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            OSError(u"no COM here")))
+    assert FP.ask(title=u"t", start=u"s") == u"/fallback"
+    assert u"no COM here" in FP.LAST_REASON
+
+    # the quiet decline -- returns None without raising
+    monkeypatch.setattr(FP, "_modern", lambda *a, **k: None)
+    assert FP.ask(title=u"t", start=u"s") == u"/fallback"
+    assert FP.LAST_REASON, u"a silent fallback recorded no reason at all"
+
+    # ⭐ CANCEL IS NOT A FAILURE. An empty string means the person said no,
+    # and falling back there would open a second dialog in their face.
+    called[:] = []
+    monkeypatch.setattr(FP, "_modern", lambda *a, **k: u"")
+    assert FP.ask(title=u"t", start=u"s") == u""
+    assert called == [], u"a cancel opened the fallback dialog"
+
+
+def test_a_CANCEL_is_read_as_a_cancel_and_not_as_a_failure():
+    u"""🚨 FOUND BY A SURVIVING MUTANT, and the defect is a first-click one.
+
+    Deleting the cancel arm survived every check, because the only check over
+    the picker replaces `_modern` wholesale — and `_modern` opens a real COM
+    dialog, so it can never run in a suite. ⛔ The branching inside it was
+    therefore asserted by nothing.
+
+    ⭐ The decision is now `verdict_of`, a pure function over an `HRESULT`:
+    the dialog is I/O and the ruling is logic. Press Cancel with the arm
+    missing and you are told the modern picker failed, then the 2001 dialog
+    opens in your face.
+    """
+    from tsubasa.gui import folderpick as FP
+
+    assert FP.verdict_of(0) == u"ok"
+    assert FP.verdict_of(FP.HRESULT_CANCELLED) == u"cancel"
+    # ⚠ The sign matters: `Show` comes back through a `c_long`, so the value
+    # arrives NEGATIVE. Masking is the whole reason this is a function.
+    assert FP.verdict_of(-2147023673) == u"cancel", (
+        u"the same code as a signed long must still read as a cancel")
+    for bad in (0x80004005, 0x80070005, 0x8007000E, -2147467259):
+        assert FP.verdict_of(bad) == u"failed", hex(bad & 0xFFFFFFFF)
+
+
 def test_a_tkdnd_THAT_IMPORTS_BUT_CANNOT_LOAD_falls_back_to_a_plain_root(
         monkeypatch):
     u"""🚨 GUARDING THE IMPORT IS NOT GUARDING THE TOOLKIT.

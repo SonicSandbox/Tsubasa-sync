@@ -1474,6 +1474,80 @@ account with NO Python**. Everything mechanical is closed; that one needs a
 person, and it is the only test that can fail for the reason the deliverable
 exists.
 
+## Step 4d — ✅ The interaction pass — hover states, the picker, the credit — DONE 2026-09-17
+
+**surfaces:** `ui` · **depends on:** 3d, 4c · **authority:** Sonic, directly:
+*"all buttons need a hover over color change that is in good taste of modern UI
+design… when you click on browse it has the thinking icon, the gui freezes…
+when you hover over the category headers they turn white. it looks bad… At the
+very bottom include a 'Created by SonicSandbox'… and the github link."*
+
+⛔ **Not an overhaul — ruled.** *"It doesn't need an overhaul, but please skin
+this appropriately using UX design principles. Nothing distracting."*
+
+🚨 **ALL THREE DEFECTS WERE INVISIBLE TO 103 GREEN CHECKS**, and for one
+reason: every one of them is about a state the suite never entered — **the
+pointer being over something**. They were found by a person using the window.
+
+| | What was wrong |
+| --- | --- |
+| **Buttons** | `activebackground=bg`. ⛔ Tk's `active` state is the PRESSED state for a Button, and it was set to the resting colour anyway — so hovering did nothing and pressing did nothing. Every control in the window was inert under the pointer |
+| **Column headings** | `style.configure` sets the RESTING look and says nothing about any state, so **clam's own `active` map was still in force — and clam is a LIGHT theme.** The headings flashed near-white on a `#1c1f25` panel on every pass of the mouse |
+| **Browse** | The dialog had **no owner**, so Windows could not block the right window; it started **nowhere**, so it walked the whole shell namespace behind a wait cursor; and it was `tk_chooseDirectory` — measured, window class **`#32770`**, the 2001 `SHBrowseForFolder` tree |
+
+### ⚠ THE FREEZE WAS NOT A FREEZE, AND NOT A THREADING PROBLEM
+
+Measured before anything was changed: **29 `after()` ticks ran during 3.4 s of
+open dialog**, and `IsHungAppWindow` stayed **False** throughout. ⛔ So no
+amount of threading was ever the fix — and it could not have been, because a
+native modal must pump messages on the thread that owns its parent. The report
+was about what it LOOKED like, and the answer was the dialog.
+
+⭐ `gui/folderpick.py` tries `IFileOpenDialog` with `FOS_PICKFOLDERS` through
+the COM ABI and **always** falls back to `askdirectory` — `00-INDEX.md` Rule 1
+in miniature, an accelerator never a dependency.
+
+### ⭐ The hover direction follows the SURFACE, and that is measured
+
+A dark recessed control **lifts** toward the light; a bright filled one
+**deepens**. ⚠ The first pass used one rule for both, and lifting the accent
+`#6aa8d8` gave `#79b1dc` — a 15/255 step on an already-bright fill that **did
+not survive a screenshot**, while the same 10% on `#2b3038` is obvious. Every
+surface now moves 15–23/255 in the right direction. ⛔ And `_shade`
+interpolates toward white rather than multiplying: a multiply moves `#15171b`
+to `#171920`, which nobody can see.
+
+### 🚨 Four lessons this step paid for
+
+1. ⭐ **A SURVIVING MUTANT FOUND A BRANCH NOTHING COULD REACH.** The picker's
+   cancel arm lived inside `_modern`, which opens a real COM dialog and can
+   never run in a suite — so the only check over it replaced `_modern`
+   wholesale. Deleting the cancel arm survived everything, and the defect is a
+   first-click one: press Cancel, be told the modern picker failed, watch the
+   2001 dialog open in your face. ⭐ Fixed by extracting `verdict_of(hr)` — the
+   **dialog is I/O and the ruling is logic**, and separating them is what made
+   it testable at all.
+2. 🚨 **A SCREEN-REGION CAPTURE PHOTOGRAPHS WHATEVER IS ON TOP.** `CopyFromScreen`
+   twice caught an unrelated application, and once returned samples of
+   `#ffffff`/`#000000` — colours this theme does not contain. ⭐ The capture now
+   **verifies the window's own ground colour is in the image and deletes the
+   file if not**; it refused a bad shot on its first run. A picture of the wrong
+   thing is worse than no picture, because it is believed.
+3. ⛔ **DRIVING THE OWNER'S MOUSE IS NOT A THING A TEST MAY DO.** `SetCursorPos`
+   + `mouse_event` were used to click the real window, and the owner reported
+   his cursor fighting him and the machine slowing down. Hover states are now
+   produced with `event_generate`, which Tk delivers internally.
+4. ⚠ **`<Enter>` IS NOT DELIVERED TO AN UNMAPPED WIDGET**, and `winfo_rooty()`
+   answers 0 for one. Three checks reported *"no hover"* and *"not at the
+   bottom"* against a window that does both, until they called `root.update()`.
+
+**Built:** `_shade` · `_luma` · `_hover_of` · `_interactive` · `_link` ·
+`_build_credit` · `_open_url` · `gui/folderpick.py`.
+**Green:** `gui` **113 checks**, and **24/24 mutants** killed
+(`_work/probe_4d_1_interaction_mutants.py`).
+
+---
+
 ## Step 4b — Rust ⏸
 
 Unjustified: B1 runs at 49 ms/pair in numpy, measured. Revisit only if B5 misses its target on the
