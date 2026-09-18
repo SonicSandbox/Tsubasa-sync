@@ -380,6 +380,38 @@ def test_a_test_WINDOW_CANNOT_TOUCH_THE_SCREEN_SONIC_IS_USING():
         root.destroy()
 
 
+def test_the_private_desktop_is_REFUSED_off_windows(monkeypatch):
+    u"""🚨 NO `skipif` ON THIS ONE, DELIBERATELY — IT IS THE ONLY CHECK HERE
+    THAT RUNS ON ALL SIXTEEN CI JOBS.
+
+    `why_not_a_private_desktop()` is the DECISION, split out from the doing
+    precisely so it can be driven without Win32: it touches no `ctypes`, opens
+    no window and needs no display. Everything else about the private desktop
+    is Windows-only plumbing and is skipped off Windows.
+
+    ⛔ THE ARM THIS GUARDS HAS TWICE PUT 8 RED JOBS ON THE BOARD. Deleting the
+    platform guard was measured SURVIVING the whole suite on Windows — because
+    on Windows it is always true — and what it lets through is a Linux job
+    walking into `ctypes.WinDLL`, which does not exist there, followed one line
+    later by `from ctypes import wintypes`, which does not either.
+    """
+    import conftest
+
+    monkeypatch.delenv(conftest.SHOW_WINDOWS, raising=False)
+    for platform in (u"linux", u"darwin", u"freebsd12"):
+        monkeypatch.setattr(conftest.sys, u"platform", platform)
+        assert conftest.why_not_a_private_desktop() == u"not Windows", (
+            u"on %s it still tries to create a Win32 desktop" % platform)
+
+    monkeypatch.setattr(conftest.sys, u"platform", u"win32")
+    assert conftest.why_not_a_private_desktop() == u"", \
+        u"on Windows it refuses the private desktop"
+
+    # ⭐ AND THE OFF SWITCH OUTRANKS THE PLATFORM, on every platform.
+    monkeypatch.setenv(conftest.SHOW_WINDOWS, u"1")
+    assert conftest.SHOW_WINDOWS in conftest.why_not_a_private_desktop()
+
+
 @pytest.mark.skipif(not sys.platform.startswith("win"),
                     reason=u"needs a display")
 def test_the_hidden_windows_have_an_OFF_SWITCH(monkeypatch):
@@ -413,6 +445,8 @@ def test_the_hidden_windows_have_an_OFF_SWITCH(monkeypatch):
         u"off Windows it still tries to create a desktop"
 
 
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"drives Win32 desktop plumbing; see the note")
 def test_a_desktop_that_CANNOT_be_entered_SAYS_SO_instead_of_lying(monkeypatch):
     u"""🚨 WRITTEN BECAUSE TWO MUTANTS SURVIVED. Dropping the `CreateDesktopW`
     result, and swallowing a failed `SetThreadDesktop`, both left every other
@@ -444,6 +478,25 @@ def test_a_desktop_that_CANNOT_be_entered_SAYS_SO_instead_of_lying(monkeypatch):
 
     monkeypatch.delenv(conftest.SHOW_WINDOWS, raising=False)
 
+    # 🚨 WINDOWS-ONLY, AND IT COST 8 RED CI JOBS TO SETTLE THAT.
+    # Everything here drives a FAKE Win32, so the first instinct was that it
+    # needs no real one — forcing `sys.platform` to `"win32"` and letting
+    # Linux run it too. ⛔ That does not work: past the guard,
+    # `use_a_private_desktop()` does `from ctypes import wintypes`, and
+    # **`ctypes.wintypes` does not exist off Windows** — so forcing the
+    # platform only moves the failure one line down.
+    #
+    # ⚠ THIS FUNCTION HAS NOW MADE THE SAME MISTAKE TWICE: the
+    # `raising=False` below was added in this session to fix a Windows-only
+    # assumption, and a new one arrived two edits later.
+    # ⭐ THE GAP IS COVERED ELSEWHERE, which is why skipping is honest here:
+    # `test_the_private_desktop_is_REFUSED_off_windows` carries NO `skipif`
+    # and drives `why_not_a_private_desktop()` on linux, darwin and freebsd —
+    # that is the DECISION, it touches no Win32, and it runs on all sixteen
+    # CI jobs. ⚠ An earlier version of this note named
+    # `..._have_an_OFF_SWITCH` instead and said it *runs on every platform*;
+    # it is `skipif not win`, so that was false the moment it was written.
+    #
     # 🚨 THE DECLARATIONS ARE LOAD-BEARING AND NOTHING CHECKED THEM.
     # `conftest.py` says so in capitals — *undeclared, ctypes assumes int
     # and truncates a 64-bit handle* — and an adversary deleted BOTH
