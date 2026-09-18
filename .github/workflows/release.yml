@@ -289,6 +289,9 @@ jobs:
       # added — `github.token` is issued per run.
       contents: write
     steps:
+      # ⭐ The checkout is for `docs/release-notes/<tag>.md` — see below.
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v7
         with:
           name: standalone-windows-x64
@@ -315,8 +318,24 @@ jobs:
           # ⚠ The tag exists; a RELEASE is a separate object and may not.
           # Create it only when absent, so a release written by hand keeps its
           # notes.
-          gh release view "$TAG" > /dev/null 2>&1 || \
-            gh release create "$TAG" --title "$TAG" --generate-notes
+          #
+          # ⭐ WRITTEN NOTES IF THERE ARE ANY. `--generate-notes` produces a
+          # list of commit subjects — accurate, and useless to somebody
+          # deciding whether to download this. A release page is read by
+          # people who do not know what the project is, so
+          # `docs/release-notes/<tag>.md` wins when it exists and the
+          # generated list is the fallback for a version nobody wrote up.
+          NOTES="docs/release-notes/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            echo "using written notes: $NOTES"
+            gh release view "$TAG" > /dev/null 2>&1 || \
+              gh release create "$TAG" --title "tsubasa $TAG" \
+                                       --notes-file "$NOTES"
+          else
+            echo "::warning title=no written release notes::$NOTES does not exist; falling back to a generated commit list"
+            gh release view "$TAG" > /dev/null 2>&1 || \
+              gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
 
           # =================================================================
           # ⛔ NO `--clobber`. A PUBLISHED ARTEFACT IS IMMUTABLE.
