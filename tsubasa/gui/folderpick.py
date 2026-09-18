@@ -68,6 +68,25 @@ def verdict_of(hr):
     return u"failed"
 
 
+def _modern_is_possible():
+    u"""Is there a modern picker on this platform at all? -> bool
+
+    ⭐ A NAMED PREDICATE RATHER THAN AN INLINE `sys.platform` TEST, and that is
+    not tidiness. `IFileOpenDialog` is a Windows COM interface, so on Linux
+    and macOS `ask()` goes straight to `askdirectory` and the whole
+    fallback-and-say-why contract is **vacuous** — there was nothing to fall
+    back FROM.
+
+    🚨 A check written on Windows asserted that contract unconditionally and
+    went red on **eight CI jobs** across Linux and macOS with
+    `assert 'no COM here' in ''`. ⛔ The platform gate was buried inside
+    `ask()`, so the only way to drive the other side of it was to lie about
+    `sys.platform` globally. Naming it makes the rule substitutable, which is
+    what lets one check cover both worlds.
+    """
+    return sys.platform.startswith("win")
+
+
 def ask(parent=None, title=u"", start=u""):
     u"""-> the chosen folder, or `u""` if the person cancelled.
 
@@ -76,7 +95,7 @@ def ask(parent=None, title=u"", start=u""):
     """
     global LAST_REASON
     LAST_REASON = u""
-    if sys.platform.startswith("win"):
+    if _modern_is_possible():
         try:
             chosen = _modern(parent, title, start)
             if chosen is not None:

@@ -1510,6 +1510,13 @@ def test_the_folder_picker_ALWAYS_falls_back_and_says_why(monkeypatch):
     monkeypatch.setattr(FP, "_classic",
                         lambda title, start: called.append((title, start))
                         or u"/fallback")
+    # 🚨 THE PLATFORM GATE IS FORCED ON, and that is the whole reason it is a
+    # named predicate. `IFileOpenDialog` is Windows COM, so off Windows `ask`
+    # goes straight to the classic dialog and this contract is vacuous —
+    # there is nothing to fall back FROM. ⛔ Written without this, the check
+    # went red on EIGHT CI jobs across Linux and macOS with
+    # `assert 'no COM here' in ''`, having only ever been run on Windows.
+    monkeypatch.setattr(FP, "_modern_is_possible", lambda: True)
 
     monkeypatch.setattr(FP, "_modern",
                         lambda *a, **k: (_ for _ in ()).throw(
@@ -1528,6 +1535,36 @@ def test_the_folder_picker_ALWAYS_falls_back_and_says_why(monkeypatch):
     monkeypatch.setattr(FP, "_modern", lambda *a, **k: u"")
     assert FP.ask(title=u"t", start=u"s") == u""
     assert called == [], u"a cancel opened the fallback dialog"
+
+
+def test_off_WINDOWS_the_picker_goes_straight_to_the_classic_dialog(monkeypatch):
+    u"""🚨 THE HALF THAT WAS NEVER COVERED, AND IT TURNED CI RED ON EIGHT JOBS.
+
+    `IFileOpenDialog` is a Windows COM interface. Off Windows there is no
+    modern picker to try, so `ask` must go straight to `askdirectory` **and
+    must not invent a fallback reason** — there was nothing to fall back from.
+
+    ⛔ Everything about this module had only ever been run on Windows, where
+    the other branch is the one that executes. `doctrine/verification`: ask
+    what your real-data pass does NOT contain — here it was an entire
+    platform, and the CI matrix is the only reason it surfaced before a user
+    did.
+    """
+    from tsubasa.gui import folderpick as FP
+
+    called = []
+    monkeypatch.setattr(FP, "_classic",
+                        lambda title, start: called.append((title, start))
+                        or u"/classic")
+    monkeypatch.setattr(FP, "_modern_is_possible", lambda: False)
+    monkeypatch.setattr(FP, "_modern", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError(u"the modern picker was tried where it cannot exist")))
+
+    assert FP.ask(title=u"t", start=u"s") == u"/classic"
+    assert called == [(u"t", u"s")], called
+    assert FP.LAST_REASON == u"", (
+        u"a reason was recorded for a fallback that was never a fallback: %r"
+        % FP.LAST_REASON)
 
 
 def test_a_CANCEL_is_read_as_a_cancel_and_not_as_a_failure():

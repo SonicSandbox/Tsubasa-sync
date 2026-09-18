@@ -36,6 +36,21 @@ tsubasa ~/Anime --subs ~/Downloads/subs      # or in a completely separate place
 Both are searched recursively, so *"my whole anime folder"* and *"everything I
 ever downloaded"* are valid inputs. Point and go.
 
+<!--
+  ⚠ ABSOLUTE, for the same reason as the logo above: this file is also the
+  PyPI long description, and PyPI does not resolve repository-relative paths.
+-->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/SonicSandbox/Tsubasa-sync/main/docs/screenshot.png"
+       alt="the tsubasa window: four episodes paired, three synced with their offsets and match rates, one refused because it is a different episode"
+       width="820">
+</p>
+
+<p align="center"><sub>
+  Every row is a decision you can audit — the offset applied, the match rate,
+  and <b>why</b>. The refused one is a different episode, and it was left alone.
+</sub></p>
+
 ---
 
 ## The hard part is knowing which file goes with which
@@ -134,12 +149,27 @@ tsubasa  ~/Anime/片田舎のおっさん S2                  24 videos · 26 su
 ## Install
 
 ```bash
-pip install git+https://github.com/SonicSandbox/Tsubasa-sync.git
+pip install tsubasa-sync
+```
+
+Or with everything optional turned on:
+
+```bash
+pip install "tsubasa-sync[parsing,trash,gui]"
 ```
 
 > ⚠ **The install name and the import name differ.** The distribution is
 > `tsubasa-sync`; the module you import is `tsubasa`. The short name was
 > already taken on PyPI by an unrelated project.
+>
+> ```python
+> import tsubasa          # not `import tsubasa_sync`
+> ```
+
+**On Windows, without installing Python at all:** grab
+`tsubasa-windows-x64.zip` from the [releases
+page](https://github.com/SonicSandbox/Tsubasa-sync/releases) — see
+[below](#windows-without-installing-python).
 
 **Python 3.10+ and numpy** — that is the whole hard dependency list.
 
@@ -268,7 +298,7 @@ empty on a non-confident outcome**.
 ## Desktop app
 
 ```bash
-pip install "tsubasa-sync[gui] @ git+https://github.com/SonicSandbox/Tsubasa-sync.git"
+pip install "tsubasa-sync[gui]"
 tsubasa-gui
 ```
 
