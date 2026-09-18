@@ -127,7 +127,11 @@ exists**.
 a full-width fixture built with `u"（０%d）" % i` — was found to be **ASCII in disguise**
 and was passing against the broken code. `LEDGER.md` §Harness.
 
-Nothing below this line is built.
+⛔ **THIS TABLE STOPPED BEING THE BUILD STATUS ON 2026-09-08** — it is a snapshot of
+that day, and everything from 3a onward (3a, 3a-bis, 3b, 3c, 3c-0, 3d, 3e, 3f, 4a, 4c,
+4d, 4e, 4f, 4g) was built after it and is recorded in its own `## Step` section below,
+each carrying its own proof. **`HANDOFF.md` is the current state; this is history.**
+Only **3g**, **4b** and **B6** are unbuilt, and each says so in its own section.
 
 ---
 
@@ -1344,7 +1348,11 @@ The steps for a given version: `RELEASE-0.1.2-NEXT.md`. ffmpeg is found on PATH 
 0.1.4. It is needed only for audio (VAD) and for containers the native reader cannot read. ⚠ **Read `doctrine/release` first. Pipe nothing
 inside the block.**
 
-## Step 3g — ⏳ `tsubasa setup --ffmpeg` — the installer, ruled 2026-09-17
+## Step 3g — ⏸ HELD — `tsubasa setup --ffmpeg` — the installer, ruled 2026-09-17
+
+⛔ **HELD BY SONIC, 2026-09-17:** *"hold off on runbook 3g"*. Nothing
+technical blocks it and the ruling below still stands — it simply is not
+the next thing. **Do not start it without his go.**
 
 **surfaces:** `delivery` `logic` `harness` · **authority:** `10-deployment.md`
 §*Acquiring ffmpeg* (the design is already written there) · **depends on:** nothing
@@ -1644,6 +1652,323 @@ corpus has none. **7/7 after the fixtures were fixed.**
 
 **Green:** `sidecar` **85 checks** (80 + 5), 7/7 mutants
 (`_work/probe_4f_1_display_name_mutants.py`).
+
+---
+
+## Step 4g — ✅ The startup/responsiveness pass — WHY THE MACHINE LAGS — DONE 2026-09-17
+
+surfaces: logic, ui, harness
+
+🚨 **REPORTED, on the shipped standalone.** Sonic: *"why does my computer
+lag, my mouse lag when it starts up? And it doesn't look or feel very
+responsive for the moments when i press browse, etc."*
+
+⭐ **MEASURED FIRST, AND IT WAS THREE DIFFERENT THINGS.** Frozen build,
+cold: **1.7–4.2 s to a window against 0.8–1.1 s of CPU** — so most of the
+wall clock is *waiting*, not *working*, and a code fix could only ever have
+reached the smaller half.
+
+| Cause | Size | Fixable in code |
+| --- | --- | --- |
+| Defender on-access scan of an unsigned onedir — **1,274 files, 43 DLLs** | **~3 s** | ⛔ **No.** It is the OS reading every byte we ship |
+| `numpy`, imported to draw a window, never used by it | **245 ms / 10.5 MB** | ✅ Fixed — `tsubasa/lazynp.py` |
+| Browse's first-open shell-namespace cost | first open only | ✅ Fixed at 4d (owner + start folder), **not** by threads |
+
+**Shipped:** `import tsubasa.gui.app` **462 → 251 ms**; GUI resident memory
+**29.5 → 19.0 MB** — numpy alone was **~25% of the frozen window process**,
+for arithmetic the GUI never does (it shells out to `tsubasa.exe` per run).
+
+⚠ **The user-facing half is a document, not a patch:** `docs/WINDOWS-STARTUP.md`
+in the clone, linked from the README and the release notes — the Defender
+exclusion, what it does and does not cost, and why the app is unsigned.
+
+---
+
+### 🚨 THE FINDING THAT COST THE MOST: A MEASUREMENT IS ABOUT THE THING IT WAS MEASURED ON
+
+At 4d I added a **delayed busy cursor** to Browse, on a real number: **29 Tk
+timer ticks during 3.4 s of open dialog.** The number was true. It was taken
+against `filedialog.askdirectory()` — **the dialog I had just replaced.**
+
+Re-measured on the shipped path, same harness, only the dialog differing:
+
+    folderpick.ask()   (IFileOpenDialog, SHIPPED)    3.6 s modal →   0 ticks
+    filedialog.askdirectory()  (the REPLACED one)    3.5 s modal →  40 ticks
+
+Tk runs its own common dialogs off-thread, so the Tcl loop keeps servicing
+timers. `IFileOpenDialog::Show` runs its modal loop **on the Tk thread**, and
+nothing scheduled can run. ⛔ **The feature could never fire, in any
+circumstance, and had shipped.**
+
+⭐ **The rule: a measurement is an observation of ONE configuration.** I
+carried it across the single change that invalidated it — and the change was
+mine, in the same step, minutes earlier. **Re-measure after the thing you
+measured is gone.**
+
+### 🚨 AND ITS CHECK PASSED — BECAUSE THE FAKE DISAGREED WITH THE REAL THING
+
+The check for that feature was green the whole time. Its fake dialog **pumped
+the event loop**, which is exactly what a real native modal does not do. ⭐ **A
+fake that disagrees with the real thing measures the fake.** The one property
+the whole feature depended on was the one property the fake got backwards.
+
+⚠ Both facts are now pinned by
+`test_a_timer_CANNOT_fire_while_the_modern_dialog_is_up` — a check whose entire
+job is to stop the dead feature being rebuilt from the stale number, and which
+says in its own body what to re-measure first if anyone wants to try.
+
+### ⛔ AND IT WAS NEVER HUNG, SO THREADS WERE NEVER THE FIX
+
+`IsHungAppWindow` stayed **False** throughout the freeze Sonic reported. A
+native modal *must* pump on the thread owning its parent — moving it to a
+worker is not an option, it is a bug. The two real defects behind *"it feels
+discontinued"* were ordinary: **the dialog had no owner window**, so Windows
+could not block the right thing, and **it started nowhere**, so it walked the
+whole shell namespace behind a wait cursor. Both fixed at 4d.
+
+---
+
+### The other findings from this pass, each paid for
+
+- 🚨 **A CHECK TOOK DOWN ITS HOST.** `_has_icon` called Win32 through
+  `ctypes` with no `argtypes`; a 64-bit handle raised `OverflowError: int too
+  long to convert` and **crashed the entire smoke run**. Declare every
+  `argtypes`/`restype`, and wrap a probe so it can only ever report.
+- ⛔ **DEFERRING AN IMPORT SILENTLY BROKE `self_check()`** — it reported **ok
+  with numpy absent**, because the thing that used to fail at import time now
+  failed at call time. A laziness change must be paired with an explicit
+  presence check (`importlib.util.find_spec`), and it belongs in `problems`,
+  not `notes`.
+- ⚠ **TWO NEW CHECKS WERE BOTH WRONG ABOUT THEIR OWN MECHANISM.**
+  `copy.copy` does **not** lose `__slots__` — the real trigger for the
+  proxy's infinite recursion is `cls.__new__`. And a meta-path finder returning
+  `None` means *"I don't handle this"*, **not** *"absent"* — absence must be
+  forced by monkeypatching `find_spec`. ⭐ *A check written from a belief about
+  the runtime, rather than from a run, tests the belief.*
+- ⚠ **A WINDOWS-ONLY CONTRACT IN A CHECK TURNED 8 LINUX/macOS CI JOBS RED.**
+  Fixed by extracting a named predicate, `_modern_is_possible()`, so the
+  platform question is one function a non-Windows run can answer honestly.
+- 🚨 **A MUTANT REPORTED `SURVIVED` THAT FAILED BY HAND** — a stale `.pyc`.
+  Every probe now sets `PYTHONDONTWRITEBYTECODE=1`. ⛔ A mutation run that can
+  read a cached module is not a mutation run.
+
+### 🚨 HARNESS FINDINGS — THE TOOL WAS THE DEFECT BEING INVESTIGATED
+
+- 🚨 **THE HARNESS DROVE SONIC'S PHYSICAL MOUSE.** `SetCursorPos` +
+  `mouse_event` to click a real dialog — and Sonic reported *his own cursor
+  lagging* and asked whether **tsubasa** had a threading bug. The investigation
+  and the cause were the same process. ⛔ **Never move the user's pointer.**
+  Drive Tk with `event_generate`; drive native dialogs by faking at the seam.
+  Also left behind: a hung modal and a `watch_ci.py` polling a typo'd SHA for 25
+  minutes. **Kill what you start.**
+- 🚨 **SCREEN CAPTURE CAUGHT SONIC'S OTHER WINDOWS, THREE TIMES** — twice
+  his own unrelated apps — while making a *public* screenshot. Now: DPI-aware,
+  cropped to `DWMWA_EXTENDED_FRAME_BOUNDS`, plus a border-pixel check that
+  **deletes the file and refuses** if anything foreign is in frame. ⭐ A
+  publication step needs a refusal, not a reminder.
+
+**Green:** `gui` **122 checks** (was 121 — one rewritten, one added), full suite
+re-run after the removals. **Removed by this step:** `BUSY_AFTER_MS`,
+`WARM_AFTER_MS`, `_show_busy`, `_warm_the_picker` (`gui/app.py`) and `warm()`
+(`gui/folderpick.py`) — the warm-up measured **p=0.43**, i.e. nothing. ⚠ Each
+removal left a comment block saying what was measured, so the next person does
+not rebuild it from the same stale number.
+
+---
+
+## Step 4h — ✅ The GUI suite stops interrupting the person running it — DONE 2026-09-17
+
+surfaces: harness
+
+🚨 **REPORTED.** Sonic: *"Please make all these tests occur out of focus, as
+it interrupts what I am doing."*
+
+`test_gui.py` maps **real** Tk windows on purpose — that is the whole reason it
+catches what assertions do not, and ten defects in this project came from
+looking at a real window. But every root flashed onto his screen and **took the
+keyboard**, over a hundred times in a full run, out of whatever he was typing
+into. ⛔ Deleting the real windows was never an option; the windows had to stop
+being *his*.
+
+### ⛔ THREE WINDOW-LEVEL FIXES WERE TRIED, AND ALL THREE WERE MEASURED TO FAIL
+
+| Attempt | Result |
+| --- | --- |
+| `wm_attributes("-alpha", 0.0)` | invisible — **still took the focus** |
+|  + `WS_EX_NOACTIVATE`, applied on `<Map>` | bits verified set — **still took the focus** |
+|  + withdraw → style → `ShowWindow(SW_SHOWNOACTIVATE)` | **still took the focus** |
+
+⭐ **`WS_EX_NOACTIVATE` stops Windows activating a window WHEN IT IS SHOWN. It
+does not stop Tk asking for the foreground afterwards** — and Tk does, on
+`update()`, whatever style the window carries. Each attempt was a smaller and
+smaller correction to the wrong object. **The window was never the thing with
+the problem; the desktop was.**
+
+### ⭐ WHAT WORKS: THE THREAD RUNS ON A DESKTOP OF ITS OWN
+
+`CreateDesktopW` + `SetThreadDesktop` in `conftest.py`, at **import**, because
+`SetThreadDesktop` fails on a thread that already owns a window — so it has to
+beat the first `Tk()`, which a fixture cannot promise. Measured side by side,
+same script, only the approach differing (`_work/probe_4h_2_which_focus_fix_works.py`):
+
+    styles + SW_SHOWNOACTIVATE   STOLE FOCUS **YES**   420x300, child at 318
+    private desktop              STOLE FOCUS **no**    420x300, child at 318
+
+⭐ **Geometry is identical**, which is the part that had to survive: a third of
+`test_gui.py` measures layout, and a withdrawn window reports width 1.
+
+⚠ **It has an off switch, and that is not a nicety.** `TSUBASA_TEST_SHOW_WINDOWS=1`
+puts every window back on the real desktop. *ASSERT THE OUTPUT, THEN LOOK AT IT*
+is doctrine paid for twice here, and **you cannot look at a window on a desktop
+you are not on** — a harness that made the windows permanently unreachable
+would have quietly retired the practice that found ten defects.
+
+### 🚨 TWO MUTANTS SURVIVED, AND THEY WERE THE DANGEROUS KIND
+
+The first mutation run killed **1 of 3**. The two survivors both dropped an
+error result — ignoring `CreateDesktopW` returning NULL, and swallowing a failed
+`SetThreadDesktop` — and they survived because **on this machine neither call
+ever fails, so those arms are code nothing runs.**
+
+⛔ **What they let through is the reported complaint, silently:**
+`use_a_private_desktop()` returns `u""` — *moved, all fine* — while the thread
+is still on Sonic's desktop and every window goes on taking his keyboard. And
+because the headline check trusts `DESKTOP_MOVED`, the lie disarms that check
+too. ⭐ **An error arm on a call that never fails here is exactly where a
+mutation run earns its keep** — no amount of green says anything about it.
+Closed by driving both arms with a Win32 that fails on demand.
+
+**Green:** `gui` **126 checks** (+4), **3/3 mutants**
+(`_work/probe_4h_1_focus_mutants.py` — its mutations are all chosen to fail
+*before* a window is mapped, so running the probe cannot put one on screen).
+
+## Step 4i — ✅ The adversarial pass over 4g + 4h — DONE 2026-09-17
+
+surfaces: logic, ui, harness
+
+⭐ **THREE ADVERSARIES, ONE PER SURFACE, ~25 FINDINGS.** Split by surface
+because `dev-build` says so and the measurement backs it: a single agent over a
+whole session's work goes broad and shallow. The first attempt here WAS one
+agent over everything and it found roughly a third as much.
+
+⭐ **THE SAFETY-CRITICAL ANSWER FIRST, BECAUSE IT IS THE ONE THAT MATTERED:**
+nothing 4g did can retime a subtitle. Proven rather than argued — an eager twin
+of the tree was built and the same 29 oracle pairs run through both:
+
+    BYTE-IDENTICAL over 29 pairs; 12,894 retimed cue timestamps
+    compared at full repr precision
+
+Ten threads racing the first `align()` on a cold process: **1 distinct answer.**
+
+---
+
+### 🚨 FOUR DEFECTS A PERSON WOULD FEEL, ALL IN THE GUI, ALL UNDER GREEN CHECKS
+
+| | was | cause |
+| --- | --- | --- |
+| Pressing **Sync** or **Stop** | no visible change at all | `_hover_of` deepens a bright fill by `PRESS_SINK` and the press state WAS `_shade(base, -PRESS_SINK)` — the same expression. **Identical on 7 of 11 palette colours**, i.e. every button a person clicks |
+| A running red **Stop** | flashed **blue** when pressed, all run | `_repaint` set `bg` and never `activebackground` |
+| Hovering twice without leaving | stuck lit, and compounded | `enter` wrote `_resting` unconditionally from the CURRENT bg |
+| Click Sync, move the mouse away | **Stop turned back into blue Sync, mid-run** | `<Leave>` restored a `_resting` captured before the repaint |
+
+⭐ **THE FOURTH ONE CAME FROM CHASING A MUTANT THAT SURVIVED.** The mutation
+said `<Leave>`'s press repair was not load-bearing; the reason it was not was a
+defect sitting underneath it. `doctrine/verification`: *a surviving mutant is
+information either way — find out which.* **That is the single highest-yield
+habit in this step.**
+
+### 🚨 AND ONE REAL REGRESSION 4g INTRODUCED
+
+A **broken** numpy — present, findable, raising on import, which is the
+commonest numpy failure on Windows (`DLL load failed while importing
+_multiarray_umath`) — became **invisible**. Before 4g, `import tsubasa` raised
+it at import. After, the package imported, `self_check()` said **ok**,
+`--version` said **ok**, and the failure waited for the first sync.
+
+⛔ 4g closed the *absent* half of the door it opened and left the
+*present-but-unimportable* half wide. `self_check()` now **imports** numpy
+rather than looking it up, which settles the question instead of guessing:
+
+    working              ok = True
+    broken               ok = False   "installed but will not load (…)"
+    hostile finder + ok  ok = True    + a note naming the hook
+    absent               ok = False   "not installed"
+
+⚠ The third row is not a nicety: an existing check required that a frozen
+app's opinionated import hook must NOT make a working install report broken,
+and the first cut of this fix broke it. ⭐ **The cost is ~245 ms paid only in
+`--version`** — verified that nothing on the GUI's startup path calls
+`self_check()`, which is what 4g was protecting in the first place.
+
+### ⛔ AND `run_tests.py` SCORED **PASS** FOR A SUITE WHERE EVERY CHECK SKIPPED
+
+Property 2 tested `total == 0` and not `total == skipped`. Demonstrated live:
+
+    PASS  alignment-oracle   10 checks, 10 skipped
+    PASS  negative-controls  11 checks, 11 skipped
+    GREEN
+
+⛔ The ground-truth oracle and the suite that proves the aligner can FAIL —
+both entirely absent, both green. `tsubasa.config.json` has said *a skip is not
+a pass* in prose since 3a-bis. **Prose does not enforce.** Now a line does, and
+it was driven both ways: all-skipped → refused, partial skips → still PASS.
+
+---
+
+### ⭐ THE NEW MECHANISM, AND IT IS THE PART THAT GENERALISES
+
+`_work/probe_4i_5_what_the_suite_never_runs.py` — traces a suite and names
+every function it never executes.
+
+    tsubasa/gui/folderpick.py    31 lines run   <-- 8 never run
+    ... after the fix ...        71 lines run   <-- 2 never run
+
+The largest single cluster of findings was not subtle: **code the suite never
+runs at all.** The entire COM half of the picker — the thing 4d exists to add —
+had zero executed lines, so switching the modern picker off for every Windows
+user was green. An adversary found that by line-tracing one file by hand over
+about ninety minutes; this answers it for the whole package in forty seconds.
+
+⚠ **A zero is a QUESTION, not a verdict** — "nothing tests this", "this is a
+fallback for another machine", and "this is dead code" all read the same.
+⚠ Subprocess checks are invisible to it. ⚠ It is a **finalization gate, not a
+suite**: it asks whether the CHECKS work, which says nothing about the app.
+
+### The root cause, stated once
+
+⭐ **EVERY CHECK THAT COULD NOT FAIL WAS WRITTEN FROM THE SAME MENTAL MODEL AS
+THE CODE IT CHECKED, MINUTES LATER, BY THE SAME AGENT.** When the model is
+wrong both are wrong in the same direction and the check CONFIRMS the bug. That
+is a **correlated** failure, not a weak one, and no amount of care inside one
+head fixes it. Its species:
+
+- **the check asserts a belief about the runtime** — *a private desktop still
+  has a foreground* (it returns `None` unconditionally, so the assert was
+  `None != x`); *`copy.copy` loses `__slots__`* (it does not; `cls.__new__`
+  does); *a finder returning `None` means absent* (it means *I do not handle
+  this*)
+- **the check is self-referential** — `DESKTOP_NAME` compared to
+  `DESKTOP_NAME`, which passes for any value INCLUDING `"Default"`, which is
+  the user's own desktop, reachable because `CreateDesktopW` OPENS an existing
+  one rather than failing
+- **the fake differs from the real thing in exactly the property under test** —
+  a fake dialog that PUMPED the event loop; a fake `ask` that returned in
+  microseconds where the real one blocks for seconds; an `absent()` stub that
+  did not fail the import. ⭐ **You stub the awkward behaviour, and the awkward
+  behaviour is what you are testing**
+- **the arm never runs on this machine** — `CreateDesktopW` failure, a 64-bit
+  handle truncating (every handle here is small: 304, 360), the whole COM half
+- **prose asserting what nothing verifies** — four false claims, including
+  `#32770` offered as the way to tell the two dialogs apart when **both** are
+  `#32770`. *Measured* is a claim about what you looked at, never about what it
+  proves
+
+**Green:** `gui` **132 checks**, `packaging` **33**, full runner **39 suites /
+1,692 checks / 0 skips**. Mutants: **8/8** interaction + credit
+(`probe_4i_4`), **3/3** of the desktop ones that matter (`probe_4i_6`), **3/3**
+lazy-numpy (`probe_4i_7`). Three survivors dropped as EQUIVALENT with the
+reason recorded inline — *a mutant that cannot fail is noise, and noise is what
+gets a check switched off.*
 
 ---
 

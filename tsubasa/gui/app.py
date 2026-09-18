@@ -158,6 +158,26 @@ def _hover_of(colour):
     return _shade(colour, HOVER_LIFT)
 
 
+def _press_of(colour):
+    u"""The PRESSED fill for a widget resting on `colour`. -> "#rrggbb"
+
+    ⛔ **MEASURED IDENTICAL TO THE HOVER ON 7 OF 11 PALETTE COLOURS**, which
+    is every bright fill in the window — ACCENT, BAD, OK, CUT, ERR, INK, DIM.
+    `_hover_of` DEEPENS a bright fill by `PRESS_SINK`, and the press state was
+    computed as `_shade(base, -PRESS_SINK)` — the same expression. So
+    **pressing Sync or Stop changed nothing**, on exactly the buttons a person
+    actually clicks. Found by an adversarial pass; 126 checks were green over it
+    because nothing asserted `activebackground` at all.
+
+    ⭐ The fix is to derive the press state FROM THE HOVER STATE rather than
+    from the resting one, because **you are always hovering when you press.**
+    The colour a person sees change is hover → press, never rest → press, so
+    that is the pair that has to differ. It does, by construction, for every
+    colour: one more `PRESS_SINK` step down from wherever hover landed.
+    """
+    return _shade(_hover_of(colour), -PRESS_SINK)
+
+
 def _interactive(widget, base, fg=None):
     u"""Give a widget a hover and a press state. -> the widget
 
@@ -171,21 +191,48 @@ def _interactive(widget, base, fg=None):
     colour when a run starts (Sync → Stop, accent → red). A closure would
     restore the wrong colour on leave, which is worse than no hover at all.
     """
-    widget.configure(activebackground=_shade(base, -PRESS_SINK))
+    widget.configure(activebackground=_press_of(base))
     if fg is not None:
         widget.configure(activeforeground=fg)
 
     def enter(_e):
         if str(widget.cget(u"state")) == u"disabled":
             return
-        widget._resting = widget.cget(u"bg")
+        # ⛔ ONLY THE FIRST <Enter> RECORDS THE RESTING COLOUR. Written
+        # unconditionally this RATCHETED: a second <Enter> without a <Leave>
+        # between them captured the HOVER colour as the resting one, so
+        # <Leave> restored to hover and the button stayed lit — and it
+        # compounded. Measured on EDGE: 1× #2b3038 -> #2b3038 ok;
+        # 2× -> #40454c STUCK; 3× -> #53585e STUCK. Tk delivers <Enter>
+        # again without a <Leave> across a grab, so this is reachable.
+        if getattr(widget, u"_resting", None) is None:
+            widget._resting = widget.cget(u"bg")
         widget.configure(bg=_hover_of(widget._resting))
 
     def leave(_e):
         resting = getattr(widget, u"_resting", None)
         if resting:
-            widget.configure(bg=resting, activebackground=_shade(
-                resting, -PRESS_SINK))
+            # 🚨 THE POINTER IS ON THE SYNC BUTTON WHEN A RUN STARTS — you
+            # just clicked it. `_repaint` then turns it red, and this
+            # handler used to restore `_resting` unconditionally, so moving
+            # the pointer away turned the running **Stop** button back into
+            # a blue **Sync**. Measured:
+            #
+            #   rest #6aa8d8 -> hover #629bc7 -> run starts #e0736c
+            #   -> pointer leaves #6aa8d8   *** blue again, mid-run ***
+            #
+            # ⭐ So `_resting` is only honoured while it is still DESCRIBING
+            # this widget: if the background is no longer the hover of it,
+            # somebody repainted underneath us and the current colour wins.
+            # Found by chasing a mutant that survived — the mutation said
+            # this line was not load-bearing, and the reason it was not was
+            # a defect.
+            current = str(widget.cget(u"bg"))
+            if current == _hover_of(resting):
+                widget.configure(bg=resting,
+                                 activebackground=_press_of(resting))
+            else:
+                widget.configure(activebackground=_press_of(current))
             widget._resting = None
 
     widget.bind(u"<Enter>", enter, add=u"+")
@@ -195,6 +242,7 @@ def _interactive(widget, base, fg=None):
 #: How often the window asks the runner what has arrived. ⚠ Milliseconds of
 #: wall clock, not a pixel count -- it does NOT go through `px()`.
 TICK_MS = 60
+
 
 
 class App(object):
@@ -626,24 +674,39 @@ class App(object):
           3. **It was the 2001 dialog** (`folderpick`, measured: window class
              `#32770`). The modern picker is tried first and falls back.
 
-        ⚠ The busy cursor is set DELIBERATELY and `update_idletasks()` forces
-        it to paint before the modal opens — a cursor change queued behind a
-        blocking call arrives after the thing it was meant to explain.
+        ⛔ AND THERE IS NO BUSY CURSOR, AFTER TWO ATTEMPTS AT ONE.
+
+        Set unconditionally it flashed for a dialog that opens in **45–58 ms**
+        — a flicker, and the original report was literally *"it has the
+        thinking icon"*. Delayed behind `root.after(250, …)` it could **never
+        fire.**
+
+        🚨 THE SECOND FAILURE IS THE ONE WORTH KEEPING. It rested on a real
+        measurement — *29 Tk timer ticks during 3.4 s of open dialog* — taken
+        against `filedialog.askdirectory()`, **the dialog this method had just
+        replaced.** Re-measured on the shipped path:
+
+            folderpick.ask()  (IFileOpenDialog, shipped)   0 ticks in 3.6 s
+            filedialog.askdirectory()  (replaced)         40 ticks in 3.5 s
+
+        Tk runs its own common dialogs off-thread, so the Tcl event loop keeps
+        servicing timers; `IFileOpenDialog::Show` runs its modal loop **on**
+        the Tk thread and nothing scheduled can run. ⛔ **A measurement is
+        about the thing it was measured on.** Carrying it across the change
+        that invalidated it produced a feature that could not work — and a
+        check that passed only because its fake pumped the event loop, which
+        is exactly what the real modal does not do.
+
+        ⭐ So: nothing. The dialog is Windows' own, and its latency reads as
+        Windows', not as this application hanging.
         """
         start = (self.folder_var.get() or u"").strip()
         if not os.path.isdir(start):
             start = u""
-        try:
-            self.root.configure(cursor=u"watch")
-            self.root.update_idletasks()
-            chosen = _folderpick.ask(parent=self.root.winfo_id(),
-                                     title=u"Pick a folder of videos",
-                                     start=start)
-        finally:
-            # ⛔ RESTORED IN A `finally`. A window left holding the busy
-            # cursor is the exact complaint this method exists to answer, and
-            # the dialog can raise.
-            self.root.configure(cursor=u"")
+
+        chosen = _folderpick.ask(parent=self.root.winfo_id(),
+                                 title=u"Pick a folder of videos",
+                                 start=start)
         if chosen:
             self.folder_var.set(chosen)
             self._folder_typed()
@@ -786,8 +849,13 @@ class App(object):
     def _repaint(self):
         u"""The only thing that writes to the screen. ⛔ No static derived text:
         every value here is read from state on every tick."""
+        # ⛔ `activebackground` MUST MOVE WITH `bg`. Setting only the fill
+        # left a RED Stop button flashing BLUE when pressed — the accent
+        # press colour from before the run started — until a hover in-and-out
+        # happened to repair it. `_interactive`'s <Leave> was the only writer.
+        fill = BAD if self.running else ACCENT
         self.sync_btn.config(text=u"Stop" if self.running else u"Sync",
-                             bg=BAD if self.running else ACCENT)
+                             bg=fill, activebackground=_press_of(fill))
         state = u"disabled" if self.running else u"normal"
         self.browse_btn.config(state=state)
         self.settings_btn.config(state=state)

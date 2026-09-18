@@ -60,6 +60,262 @@ def _data_dir():
                         u"data")
 
 
+def test_importing_tsubasa_does_NOT_load_numpy(tmp_path):
+    u"""🚨 THE GUI IMPORTED numpy TO DRAW A WINDOW. RUNBOOK 4g.
+
+    Sonic on the shipped app: *"why does my computer lag… when it starts
+    up?"* Measured on the frozen build: 1.7–4.2 s to a window against
+    0.8–1.1 s of CPU — and **245 ms of that CPU was numpy**, which the GUI
+    never uses. It shells out to `tsubasa.exe` for every run.
+
+    ⛔ It arrived because importing ANY submodule runs `tsubasa/__init__.py`,
+    which imports the public API eagerly: `align` → `align.fit` → numpy. So
+    asking for `tsubasa.paths` pulled in the whole numeric stack.
+
+    ⚠ IN A SUBPROCESS, because `sys.modules` is process-wide and this suite
+    has certainly imported numpy by now. A check run in-process would be
+    asserting the test runner's history, not the package's behaviour.
+    """
+    import subprocess
+
+    # 🚨 `gui.app` IS IN THIS LIST BECAUSE IT WAS MISSING FROM IT. The first
+    # version imported `tsubasa.gui.run`, which never loads `app.py` — and an
+    # adversary injected a literal `import numpy` at the top of `gui/app.py`
+    # and watched this check stay GREEN. ⛔ `packaging/entry_gui.py` does
+    # `from tsubasa.gui.app import main`, so the one path a real user's window
+    # takes was the one path the check did not walk.
+    # 🚨 AND THE TWO `__main__` MODULES ARE HERE FOR THE SAME REASON, ONE
+    # ROUND LATER. `python -m tsubasa` and `python -m tsubasa.gui` are the
+    # two documented invocations, and an adversary put a literal
+    # `import numpy` at the top of each and watched this check stay GREEN.
+    # ⛔ Same hole, same shape, one layer further out: the check walked the
+    # modules a user's window IMPORTS but not the module a user RUNS.
+    probe = (u"import sys\n"
+             u"import tsubasa\n"
+             u"from tsubasa.gui import run, branding, folderpick\n"
+             u"from tsubasa.gui import app\n"
+             u"import tsubasa.cli\n"
+             u"import tsubasa.__main__\n"
+             u"import tsubasa.gui.__main__\n"
+             u"print('numpy' in sys.modules)\n")
+    out = subprocess.run([sys.executable, u"-c", probe], capture_output=True,
+                         text=True, cwd=str(tmp_path),
+                         env=dict(os.environ, PYTHONPATH=ROOT))
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == u"False", (
+        u"importing tsubasa pulled in numpy: %r %r" % (out.stdout, out.stderr))
+
+
+def test_numpy_IS_loaded_the_moment_alignment_actually_happens(tmp_path):
+    u"""⭐ THE OTHER HALF, and without it the check above is satisfied by
+    deleting numpy from the project entirely. Deferring an import is only
+    correct if the thing still arrives when it is needed."""
+    import subprocess
+
+    probe = (u"import sys, tsubasa\n"
+             u"ref = [float(i) for i in range(0, 200, 2)]\n"
+             u"sub = [t + 1.5 for t in ref]\n"
+             u"fit = tsubasa.align(ref, sub, 400.0)\n"
+             u"print('numpy' in sys.modules, round(fit.single[0], 3))\n")
+    out = subprocess.run([sys.executable, u"-c", probe], capture_output=True,
+                         text=True, cwd=str(tmp_path),
+                         env=dict(os.environ, PYTHONPATH=ROOT))
+    assert out.returncode == 0, out.stderr
+    loaded, offset = out.stdout.split()
+    assert loaded == u"True", u"align() ran without numpy: %r" % out.stdout
+    # ⛔ AND THE ANSWER IS STILL RIGHT. `00-INDEX.md`: an efficiency change
+    # must not change the answer.
+    assert abs(float(offset) - (-1.5)) < 0.05, offset
+
+
+def test_self_check_REFUSES_an_install_with_no_numpy(monkeypatch):
+    u"""🚨 DEFERRING numpy TURNED A LOUD FAILURE INTO A SILENT ONE.
+
+    Before RUNBOOK 4g, `import tsubasa` raised `ModuleNotFoundError` the
+    instant numpy was missing — immediate and unmissable. Afterwards the
+    package imported, `self_check()` said **ok**, `tsubasa --version` said
+    **ok**, and the failure waited until the first real sync. ⛔ That is
+    exactly the class `selfcheck.py`'s own note is about, arriving through a
+    door it did not cover — found by an adversarial pass, not by this suite.
+
+    ⚠ It is a PROBLEM, not a note: ffmpeg and the optional parsers degrade to
+    documented behaviour, and numpy does not — every alignment raises.
+
+    ⚠ `find_spec` IS MONKEYPATCHED, which is how the sibling check above
+    drives a hostile import system too. ⛔ A meta-path finder does NOT work
+    here and the first version of this check used one: returning `None` from
+    `find_spec` means *"I do not handle this module"*, so the real finders run
+    next and numpy is found anyway. The check passed while proving nothing.
+    """
+    import importlib
+    import importlib.util
+
+    real = importlib.util.find_spec
+    real_import = importlib.import_module
+
+    def absent(name, package=None):
+        if name == u"numpy" or name.startswith(u"numpy."):
+            return None
+        return real(name, package)
+
+    def cannot_import(name, package=None):
+        if name == u"numpy" or name.startswith(u"numpy."):
+            raise ModuleNotFoundError(u"No module named 'numpy'")
+        return real_import(name, package)
+
+    # 🚨 BOTH HALVES, AND THE SECOND ONE WAS MISSING. This stub used to
+    # patch only `find_spec`, which models absence as *the lookup returns
+    # None* — but a machine with no numpy ALSO fails the import, and
+    # `self_check()` now settles the question by importing rather than by
+    # asking. Against the half-stub the real numpy on this machine imported
+    # fine and the check went green over an install it was calling empty.
+    #
+    # ⭐ **A STUB THAT MODELS HALF A CONDITION TESTS HALF OF IT** — and the
+    # half it leaves out is the half the code under test actually consults.
+    # Found by an adversarial pass, one round after this check's own
+    # docstring recorded the same mistake in a different coat.
+    monkeypatch.setattr(importlib.util, "find_spec", absent)
+    monkeypatch.setattr(importlib, "import_module", cannot_import)
+    check = tsubasa.self_check()
+
+    assert not check.ok, (
+        u"self_check() reports a whole install with no numpy at all, so "
+        u"`tsubasa --version` says ok and the failure waits for the first sync")
+    said = u" | ".join(check.problems)
+    assert u"numpy" in said, said
+    # ⭐ Actionable, as every other sentence this module produces is.
+    assert u"pip install" in said, said
+
+    # ⛔ AND IT IS NOT REPORTED WHEN numpy IS THERE, or the check is just an
+    # assertion that `ok` can be False.
+    # ⚠ BOTH, because both were replaced. Restoring only `find_spec` left
+    # the import still blocked, so this arm asked *"is a healthy install
+    # reported healthy"* of an install that was still broken.
+    monkeypatch.setattr(importlib.util, "find_spec", real)
+    monkeypatch.setattr(importlib, "import_module", real_import)
+    assert tsubasa.self_check().ok, tsubasa.self_check().problems
+
+
+def test_the_lazy_numpy_proxy_cannot_recurse_on_its_own_slot():
+    u"""⛔ 999 FRAMES, 996 OF THEM ON ONE LINE. `copy.copy(np)` builds the
+    instance with `cls.__new__`, which never fills `__slots__`, so reading
+    `self._globals` re-enters `__getattr__` and misses again — for ever. The
+    traceback blamed the assignment rather than the cause.
+
+    ⚠ No call site does this; the cost was a terrible error, not a wrong
+    answer. Found by an adversarial pass."""
+    from tsubasa import lazynp
+
+    # ⚠ `cls.__new__(cls)`, NOT `copy.copy`. The first version used copy and
+    # the check failed: `__reduce_ex__` handles `__slots__` properly, so a
+    # copy keeps `_globals` and never reaches the defect. The reachable door
+    # is any construction that skips `__init__` — which is what copy, pickle
+    # and several deserialisers do on classes that DON'T define slots state.
+    raw = lazynp._LazyNumpy.__new__(lazynp._LazyNumpy)
+    with pytest.raises(AttributeError):
+        raw.anything_at_all
+    # ⭐ And the real thing still works.
+    room = {}
+    live = lazynp.numpy_when_needed(room)
+    assert live.float64 is not None
+    assert room[u"np"].__name__ == u"numpy"
+
+
+def test_NOTHING_touches_bare_np_in_the_two_modules_that_defer_it():
+    u"""🚨 `lazynp.py` CLAIMS *"No call site does that, and a check
+    enforces it"* — AND THERE WAS NO SUCH CHECK. An adversary put a bare `np`
+    inside `fit()` and inside `objective()` and both survived the **entire**
+    suite, 1593 checks.
+
+    ⛔ WHY IT MATTERS: the proxy only becomes numpy on ATTRIBUTE ACCESS.
+    `np.asarray(x)` is fine; `f(np)`, `isinstance(x, np)` or anything storing
+    it sees a `_LazyNumpy` instead — and this is the alignment path, where a
+    wrong answer is a wrongly retimed subtitle rather than a crash.
+
+    ⭐ So the claim is now a check: every `np` must be the object of an
+    attribute access, and the only exception is the binding itself.
+    """
+    import ast
+    import importlib
+    import io as _io
+
+    # ⚠ `importlib.import_module`, NOT `from tsubasa.align import fit`.
+    # `tsubasa/__init__.py` deliberately REBINDS `tsubasa.align` from the
+    # subpackage to the FUNCTION, because `05-interface.md` promises
+    # `from tsubasa import align` is callable — so the attribute route
+    # hands back a function and `FIT.__file__` does not exist. That is the
+    # very compatibility shape `lazynp.py` documents as the reason a lazy
+    # `__init__` was rejected, and it caught this check on its first run.
+    FIT = importlib.import_module(u"tsubasa.align.fit")
+    OBJ = importlib.import_module(u"tsubasa.align.objective")
+
+    for module in (FIT, OBJ):
+        src = _io.open(module.__file__, encoding=u"utf-8").read()
+        tree = ast.parse(src)
+        attributes = {id(node.value) for node in ast.walk(tree)
+                      if isinstance(node, ast.Attribute)}
+        bare = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Name) and node.id == u"np"):
+                continue
+            if isinstance(node.ctx, ast.Store):
+                continue            # `np = numpy_when_needed(globals())`
+            if id(node) in attributes:
+                continue            # `np.<something>` — the only safe form
+            bare.append(node.lineno)
+        assert not bare, (
+            u"%s uses a bare `np` at line(s) %s — that is the PROXY, not "
+            u"numpy, and it reaches the aligner"
+            % (os.path.basename(module.__file__), bare))
+
+
+def test_the_proxy_REALLY_replaces_itself_in_the_modules_that_use_it():
+    u"""🚨 THE SELF-REPLACEMENT WAS ONLY EVER CHECKED AGAINST A DICT THE
+    CHECK MADE ITSELF. An adversary replaced both call sites with
+    `numpy_when_needed({})` — a throwaway dict, so the proxy can never put
+    numpy back into the real module globals — and the whole suite stayed
+    green, oracle included. Measured cost of the surviving mutant: proxy
+    `__getattr__` calls over three alignments went from **2 to 2,970**, and
+    the wall clock did not notice.
+
+    ⭐ *The structure was gone while the timing said nothing* — which is why
+    this asserts the STRUCTURE: after a real alignment, the name `np` in each
+    module must BE the numpy module, not a stand-in for it.
+
+    ⚠ In a subprocess: `sys.modules` is process-wide and this suite has long
+    since imported numpy, so an in-process check would be asserting the test
+    runner's history.
+    """
+    import json
+    import subprocess
+
+    probe = (u"import json, types, importlib, tsubasa\n"
+             u"fit = importlib.import_module('tsubasa.align.fit')\n"
+             u"objective = importlib.import_module("
+             u"'tsubasa.align.objective')\n"
+             u"before = [type(fit.np).__name__, type(objective.np).__name__]\n"
+             u"ref = [float(i) for i in range(0, 200, 2)]\n"
+             u"tsubasa.align(ref, [t + 1.5 for t in ref], 400.0)\n"
+             u"print(json.dumps({'before': before,\n"
+             u"    'after': [isinstance(fit.np, types.ModuleType),\n"
+             u"              isinstance(objective.np, types.ModuleType)],\n"
+             u"    'names': [getattr(fit.np, '__name__', None),\n"
+             u"              getattr(objective.np, '__name__', None)]}))\n")
+    out = subprocess.run([sys.executable, u"-c", probe], capture_output=True,
+                         text=True, cwd=str(ROOT),
+                         env=dict(os.environ, PYTHONPATH=ROOT))
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+
+    assert got[u"before"] == [u"_LazyNumpy", u"_LazyNumpy"], (
+        u"numpy was already loaded before any alignment: %r" % (got[u"before"],))
+    assert got[u"after"] == [True, True], (
+        u"after a real alignment the modules still hold a proxy: %r — the "
+        u"self-replacement is not reaching the real module globals"
+        % (got[u"after"],))
+    assert got[u"names"] == [u"numpy", u"numpy"], got[u"names"]
+
+
 def test_the_package_carries_its_data_directory():
     u"""⛔ The first thing a bad wheel loses."""
     where = _data_dir()

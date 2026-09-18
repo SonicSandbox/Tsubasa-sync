@@ -17,11 +17,14 @@ Five properties, each one paid for somewhere in doctrine/verification.md:
      specifically to close a blind spot was run twice, never registered, and
      the identical blind spot caused the worst failure of that build.
 
-  2. ZERO CHECKS IS A FAILURE, NOT A PASS.  Exit 0 means "nothing went wrong",
-     which is also what an empty suite returns.  Counts come from pytest's
-     JUnit XML rather than from regexing "49 passed" out of prose -- a suite
-     once printed "REPRODUCED: returning visitor gets a broken app", emitted no
-     result line, exited 0, and scored green.
+  2. ZERO CHECKS IS A FAILURE, NOT A PASS -- AND SO IS ALL-SKIPPED.  Exit 0
+     means "nothing went wrong", which is also what an empty suite returns.
+     Counts come from pytest's JUnit XML rather than from regexing "49 passed"
+     out of prose -- a suite once printed "REPRODUCED: returning visitor gets a
+     broken app", emitted no result line, exited 0, and scored green.
+     🚨 The all-skipped half was added 2026-09-17 after an adversary showed
+     `PASS alignment-oracle 10 checks, 10 skipped` inside a run reporting
+     GREEN.  A suite can vanish without its count reaching zero.
 
   3. A TOOLING FAULT ANNOUNCES ITSELF AS A TOOLING FAULT, with its own exit
      code.  The oracle's own runner reported a missing pytest module as
@@ -222,6 +225,45 @@ def run_suite(suite, run_dir, passthrough):
         result["why"] = "ZERO checks ran. Exit 0 is not a pass."
         return result
 
+    # 🚨 AND A SUITE WHERE EVERY CHECK SKIPPED IS THE SAME THING WEARING
+    # A DIFFERENT NUMBER. Property 2 tested `total == 0` only, so a suite
+    # that ran 10 checks and skipped 10 of them scored PASS and the whole
+    # run said GREEN. Demonstrated live by an adversary:
+    #
+    #     PASS  alignment-oracle   10 checks, 10 skipped
+    #     PASS  negative-controls  11 checks, 11 skipped
+    #     GREEN
+    #
+    # ⛔ Those two are the ground-truth oracle and the suite that proves the
+    # aligner can FAIL — both entirely absent, both green. The config has
+    # said *a skip is not a pass* in prose since 3a-bis; prose does not
+    # enforce, and this is the line that does.
+    if skipped == total:
+        # 🚨 AND WHICH OF THE TWO IT IS DEPENDS ON WHAT THE SUITE CLAIMED.
+        # A suite that needs the corpus, real media or the oracle is
+        # EXPECTED to vanish where those are absent -- CI has none of them,
+        # and failing there would be a lie in the other direction. But a
+        # suite that declared it needs NOTHING and then ran nothing is
+        # broken.
+        #
+        # ⛔ EITHER WAY IT IS NOT A PASS. `alignment-oracle` reported
+        # "PASS  10 checks, 10 skipped" on every CI run this project has
+        # ever had -- so **the 29-pair alignment oracle has never run in
+        # CI**, and the summary said GREEN. Its own fixture docstring says
+        # *"a suite that silently skips everything is a green zero"*: the
+        # author knew, wrote it down, and nothing enforced it.
+        needs = [k for k in ("needsCorpus", "needsMedia", "needsOracle")
+                 if suite.get(k)]
+        if needs:
+            result["verdict"] = "ABSENT"
+            result["why"] = ("all %d checks skipped: %s not here"
+                             % (total, ", ".join(needs)))
+        else:
+            result["verdict"] = "TOOLING"
+            result["why"] = ("every one of %d checks SKIPPED, and this "
+                             "suite declares it needs nothing." % total)
+        return result
+
     if failures or errors or proc.returncode != 0:
         result["verdict"] = "FAIL"
         result["why"] = "%d failed, %d errored of %d" % (failures, errors, total)
@@ -343,6 +385,19 @@ def main():
             worst = EXIT_TOOLING
         elif r["verdict"] == "FAIL" and worst != EXIT_TOOLING:
             worst = EXIT_FAILED
+
+    # ⛔ ABSENT DOES NOT FAIL THE RUN AND IS NEVER FOLDED INTO THE GREEN.
+    # The whole defect was a summary that read as *everything ran*, so the
+    # count goes next to the verdict where it cannot be missed.
+    absent = [r["name"] for r in results if r["verdict"] == "ABSENT"]
+    if absent:
+        print("\n  ⚠ %d SUITE(S) DID NOT RUN AT ALL -- every check in them"
+              " skipped:" % len(absent))
+        for name in absent:
+            print("      %s" % name)
+        print("    They need the corpus, real media or the oracle, none of"
+              " which is here.")
+        print("    ⛔ This run says NOTHING about what they cover.")
 
     bad = [r for r in results if r["verdict"] != "PASS"]
     if bad:

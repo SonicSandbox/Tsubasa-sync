@@ -35,7 +35,15 @@ constant for constant. An efficiency change must not change the answer --
 the average number of subtitle cues within `window`. A 24-minute episode is
 ~60k floats; a four-hour concatenation ~1.7M.
 """
-import numpy as np
+# ⚠ NOT `import numpy as np` — DEFERRED. numpy costs 245 ms and is used only
+# INSIDE the functions below, but importing any tsubasa submodule runs the
+# package `__init__`, which reaches here — so the GUI paid for the numeric
+# stack to draw a window. `..lazynp` carries the whole reasoning, including
+# why the obvious fix (a lazy package `__init__`) is measured to break a
+# pinned compatibility shape.
+from ..lazynp import numpy_when_needed
+
+np = numpy_when_needed(globals())
 
 from .objective import (BUCKET, BUCKET_LOCAL_WINDOW, BUCKET_RATE_SLACK,
                         MAX_BREAK, MAX_BUCKET_DRIFT, MIN_ALIGNABLE_CUES,

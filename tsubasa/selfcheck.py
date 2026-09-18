@@ -153,6 +153,75 @@ def self_check():
             u"naming the fix. An application that bundles ffmpeg can point "
             u"tsubasa at it with tsubasa.set_ffmpeg().")
 
+    # =======================================================================
+    # 🚨 numpy IS THE ONE HARD DEPENDENCY, AND IT BECAME SILENT — RUNBOOK 4g
+    # =======================================================================
+    # Its import was deferred so the GUI stops paying for the numeric stack to
+    # draw a window. ⛔ THE PRICE, FOUND BY AN ADVERSARIAL PASS: `import
+    # tsubasa` used to raise `ModuleNotFoundError` the instant numpy was
+    # missing — loud, immediate, unmissable. Now the package imports, this
+    # function said `ok`, `tsubasa --version` said `ok`, and the failure waited
+    # until the first real sync.
+    #
+    # ⭐ That is precisely the class this module's own note is about, arriving
+    # through a door it did not cover. It is a PROBLEM rather than a note
+    # because nothing works without it — unlike ffmpeg or the parsers, which
+    # degrade to documented behaviour.
+    #
+    # ⚠ `find_spec`, never an import: asking whether numpy exists must not
+    # load it, or this check would undo the change that made it necessary.
+    # 🚨 IT IS IMPORTED, NOT MERELY LOOKED UP, AND THAT IS THE WHOLE POINT.
+    # `find_spec` answers *is it installed*, which is a different question
+    # from *does it work* — and the commonest real numpy failure on Windows
+    # is neither: it is present, findable, and raises on import
+    # (`ImportError: DLL load failed while importing _multiarray_umath`).
+    #
+    # ⛔ BEFORE 4g THAT WAS LOUD — `import tsubasa` raised it at import. After
+    # 4g deferred numpy, `import tsubasa` succeeded, `self_check()` said
+    # **ok**, `--version` said **ok**, and the failure waited for the first
+    # sync. 4g closed the *absent* half of the door it opened and left the
+    # *present-but-unimportable* half wide. Found by an adversarial pass.
+    #
+    # ⭐ The cost is ~245 ms, paid ONLY here. `self_check()` is a diagnostic:
+    # the CLI calls it for `--version`, and nothing on the GUI's startup path
+    # calls it at all — which is what 4g was protecting. ⛔ **Do not call
+    # `self_check()` while opening a window.**
+    # ⚠ A FINDER THAT REFUSES TO ANSWER IS NOT A VERDICT. `find_spec`
+    # consults every finder on the meta path, and a freezer's or a
+    # sandbox's can RAISE rather than decline — that already crashed
+    # `self_check()` once, in exactly the environments it exists for.
+    # ⛔ But neither arm of *assume broken* / *assume fine* is right: the
+    # first makes `--version` exit 1 for every frozen user whose freezer has
+    # an opinionated finder, and the second is the silence 4g created.
+    # ⭐ So the import below settles it either way, and the lookup only
+    # decides which SENTENCE to use.
+    found, why_not = True, u""
+    try:
+        found = importlib.util.find_spec(u"numpy") is not None
+    except Exception as exc:                              # noqa: BLE001
+        why_not = u"%s: %s" % (type(exc).__name__, exc)
+
+    try:
+        importlib.import_module(u"numpy")
+        if why_not:
+            notes.append(u"an import hook raised while being asked whether "
+                         u"numpy exists (%s), but numpy itself loads fine."
+                         % why_not)
+    except Exception as exc:                              # noqa: BLE001
+        if found and not why_not:
+            problems.append(
+                u"numpy is installed but will not load (%s: %s), and it is "
+                u"the one dependency tsubasa cannot work without: every "
+                u"alignment raises. Reinstalling it usually fixes this: "
+                u"`pip install --force-reinstall numpy`."
+                % (type(exc).__name__, exc))
+        else:
+            problems.append(
+                u"numpy is not installed, and it is the one dependency "
+                u"tsubasa cannot work without: every alignment raises. "
+                u"Install it with `pip install numpy`, or reinstall tsubasa "
+                u"with `pip install tsubasa-sync`, which requires it.")
+
     optional = {}
     for name, buys in OPTIONAL:
         # 🚨 `find_spec` CAN RAISE, and the instrument may not die on it. It

@@ -319,6 +319,11 @@ on the same page is the checksum.
 > zip carries no installer and writes nothing outside `%LOCALAPPDATA%\tsubasa`
 > and the subtitles it syncs.
 
+> ⏱ **The first launch after a reboot takes a few seconds.** Being unsigned,
+> the app gets scanned in full — 1,274 files — every cold start. Later launches
+> are quick. [`docs/WINDOWS-STARTUP.md`](docs/WINDOWS-STARTUP.md) explains it
+> and gives the one-folder Defender exclusion if you want the seconds back.
+
 **ffmpeg is not bundled.** Matroska files with a subtitle track inside need
 nothing; any other container needs `ffmpeg` and `ffprobe` on `PATH`, or the
 folder holding them in `TSUBASA_FFMPEG`.

@@ -69,7 +69,7 @@
     "//excused": "A harness may be excused -- a build step, a one-off probe, a finalization gate -- but THE REASON LIVES HERE, IN WRITING.",
     "excused": {},
 
-    "//suites": "hermetic = touches nothing shared at all. needsCorpus = reads the corpus (so it is skipped, and SAYS SO, when the corpus is absent -- a skip is not a pass). needsMedia = needs real video files.",
+    "//suites": "hermetic = touches nothing shared at all. needsCorpus = reads the corpus (so it is skipped, and SAYS SO, when the corpus is absent -- a skip is not a pass). needsMedia = needs real video files. needsOracle = needs the subsync reference repo. THESE ARE READ BY THE RUNNER NOW, not just documentation: a suite whose checks ALL skip is ABSENT when it declares a need and TOOLING when it declares none. Four suites were marked hermetic:true and were not -- alignment-oracle among them, which means the 29-pair oracle had never once run in CI while reporting PASS.",
     "suites": [
       {
         "name": "wiring",
@@ -233,15 +233,17 @@
       {
         "name": "alignment-oracle",
         "cmd": ["-m", "pytest", "tests/test_alignment_oracle.py", "-q", "--no-header"],
-        "hermetic": true,
+        "hermetic": false,
         "needsCorpus": false,
+        "needsOracle": true,
         "why": "Track B1. THE suite that makes an efficiency change admissible: B1 replaced a 4,800-offset scan with a difference histogram and made a pair 135x cheaper, and the only thing between that and a silent accuracy loss is 29 pairs of truth measured WITHOUT it, two independent ways that agree. Asserts the offsets, that every cue outside a declared undetermined span gets the truth's offset, and that the truth's break lies inside that span -- because the corpus itself says the recorded split TIME is loose and cue-level correctness is what matters. Runs from 384 KB of extracted reference tracks; no media."
       },
       {
         "name": "negative-controls",
         "cmd": ["-m", "pytest", "tests/test_negative_controls.py", "-q", "--no-header"],
-        "hermetic": true,
+        "hermetic": false,
         "needsCorpus": false,
+        "needsOracle": true,
         "why": "Track B1. A positive result is not evidence until the instrument has been shown to say NO. Time-reversed, jittered, a different show and a sequel season must all be refused; a subtitle MISSING its opening cues must produce ONE segment, because that exact case invented a 127-second break when the overall-gain guard was dropped as redundant. Carries its own positive control first, so five refusals cannot pass trivially against a function that returns zero."
       },
       {
@@ -296,7 +298,7 @@
       {
         "name": "e2e",
         "cmd": ["-m", "pytest", "tests/test_e2e.py", "-q", "--no-header"],
-        "hermetic": true,
+        "hermetic": false,
         "needsCorpus": true,
         "why": "Step 3c-0 -- ⭐ THE END-TO-END BENCHMARK, and the only thing in this project that measures the PRODUCT rather than a stage. `vnbench`, the release number, scores NAMES through same_series and never calls sync(); it sat at 80.0% through the whole of 3a and 3b and would have done so if every one of them were broken, which is why the two-folder output-directory defect survived to a dry run and why ten more waited for an adversary. This assembles a real library in a TEMP directory from the staged media -- `video-derived/yomi18/track_2.ass` remuxed into a real Matroska (staged here, and re-verified against its own source on EVERY run) plus `video/Sintel-60s.mkv`, two different CODECS and one with video and audio streams -- restores each file's ORIGINAL release name, and runs scan() -> sync(write=True) over nine library shapes. ⛔ It asserts on the resulting TREE, never on the report, and the tree carries a CONTENT HASH: it used to be names and sizes, and a retime is length-preserving, so a dry run that rewrote every candidate in place and a REFUSED file that was mangled both passed. 🚨 Its strongest claim is the BROADCAST CUT -- a real AT-X capture against the streaming video's own track lands both offsets within 7 ms and 46 ms of the measured truth, with D9 dropping the one stranded cue; the OFFSETS are the claim, because `Fit.gaps` calls the crossing undetermined across 113.9 s and the reported break is a reference cue start. ⚠ That truth is subsync's, measured cue-vs-cue against a file byte-identical to this reference -- NOT an independent modality -- and `shincaps` is `nanakoraws` shifted by a constant 33.233 s, so the pair tests offset-INVARIANCE, not two witnesses. Also: a dry run changes nothing by content, the written cues MOVED by the offset the report stated (source cue read BEFORE the run, since the Sintel source and output were once the same path), a self-extraction aligns at EXACTLY zero, the measured offset agrees with one derived from 12-alignment.md §5, the wrong episode changes nothing on BOTH paths, a two-show library with bare episode numbers keeps every source, a second run CONVERGES and everything it moved is recoverable from the trash by hash (which is the RULING -- an xfail calling it a defect was written and removed the same day, because `test_pipeline.py` asserts the opposite), --out leaves the library alone, and --keep-all + --out on two real releases of one episode supersedes nothing. ⚠ ONE check is xfail(strict=True): a bracketed language tag like `.ja[cc].srt` reads `und`, so two languages share one slot -- 11.53% of real corpus filenames read `und` with a resolvable code, though zero slots in that Japanese-only corpus can exhibit the loss. ⛔ Structurally cannot cover: one episode of one show plus Sintel (a SHAPE benchmark -- `vnbench` is the population number), the runtime gate's real work (track_2.mkv is subtitle-only, so its duration echoes its own track), the mask path (B6), and whether a player renders the result."
       },
@@ -331,7 +333,7 @@
       {
         "name": "corpus-roundtrip",
         "cmd": ["-m", "pytest", "tests/test_corpus_roundtrip.py", "-q", "--no-header"],
-        "hermetic": true,
+        "hermetic": false,
         "needsCorpus": true,
         "why": "Step 1a against REAL files. Every other suite uses fixtures written by whoever wrote the parser, so they cover the cases that person thought of. This samples the actual corpus -- files written by strangers over twenty years -- and requires a zero shift to reproduce them byte for byte. Full sweep is `python -m tsubasa.dev roundtrip --all`."
       },

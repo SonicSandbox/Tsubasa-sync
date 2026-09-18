@@ -9,31 +9,66 @@ u"""Ask for a folder, using the picker the rest of Windows uses.
 
 `tkinter.filedialog.askdirectory` calls Tk's `tk_chooseDirectory`, which on
 Windows is **`SHBrowseForFolder`** — the small tree-in-a-box from Windows XP.
-⛔ MEASURED 2026-09-17: the window it opens has class **`#32770`**, a classic
-Win32 dialog, where the modern picker builds a shell view with `DirectUIHWND`
-children. It has no address bar, no search, no resize worth having, no typing
-a path, and it puts a **wait cursor** over the application while it walks the
-shell namespace.
+It has no address bar, no search, no resize worth having, no typing a path,
+and it puts a **wait cursor** over the application while it walks the shell
+namespace.
 
-⚠ **AND THE APPLICATION IS NOT ACTUALLY FROZEN WHILE IT IS UP** — measured:
-29 `after()` ticks ran during 3.4 s of dialog, and `IsHungAppWindow` stayed
-False throughout. So the report *"the gui freezes"* is about what it LOOKS
-like, and the fix is the dialog, not a thread. ⛔ A thread could not have
-fixed it anyway: Tk is single-threaded and a native modal must pump messages
-on the thread that owns the parent window.
+⛔ **A CORRECTION, AND IT WAS THIS FILE'S OWN CLAIM.** An earlier version
+said *"MEASURED: the window it opens has class `#32770`"* and offered that as
+the way to tell the two dialogs apart. **It does not distinguish them** — an
+adversary enumerated both on the same Tk thread:
+
+    [modern]  dialog windows on the tk thread: [(20385590, '#32770')]
+    [classic] dialog windows on the tk thread: [(20451126, '#32770')]
+
+`#32770` is the class of every Win32 dialog, both of these included; the
+`DirectUIHWND` difference is among the CHILDREN. ⭐ The number was real and
+the inference from it was not — *measured* is a claim about what you looked
+at, never about what it proves.
+
+⚠ **AND THE APPLICATION WAS NOT ACTUALLY HUNG WHILE THE OLD ONE WAS UP** —
+`IsHungAppWindow` stayed False throughout, so the report *"the gui freezes"*
+was about what it LOOKED like, and the fix was the dialog rather than a
+thread. ⛔ A thread could not have fixed it anyway: Tk is single-threaded and
+a native modal must pump messages on the thread owning the parent window.
+
+🚨 **AND THE TWO DIALOGS DIFFER ABOUT TIMERS — A NUMBER THAT WAS CARRIED
+ACROSS THIS VERY CHANGE AND SHOULD NOT HAVE BEEN.** This note used to say
+*"29 `after()` ticks ran during 3.4 s of dialog"*, which was true **of the
+2001 dialog** and is false of the one that replaced it. Re-measured, same
+harness, only the dialog differing:
+
+    folderpick.ask()  (IFileOpenDialog, this module)   0 ticks in 3.6 s
+    filedialog.askdirectory()  (what it replaced)     40 ticks in 3.5 s
+
+Tk runs its own common dialogs off-thread, so the Tcl event loop keeps
+servicing timers; `IFileOpenDialog::Show` runs its modal loop **on** the Tk
+thread and nothing scheduled can run. ⛔ A delayed busy cursor was built on
+the stale number and **could never fire**; it has been removed. **A
+measurement is about the thing it was measured on.**
 
 ⭐ `IFileOpenDialog` with `FOS_PICKFOLDERS` is what Explorer, Office and every
 current application opens. Same process, same thread, no new dependency —
 `ctypes` and the COM ABI, which is stable and documented.
 
 ===========================================================================
-⚠ IT FALLS BACK, ALWAYS
+⚠ IT FALLS BACK FROM THE MODERN PATH, ALWAYS
 ===========================================================================
 
-Every failure path returns to `askdirectory`. A folder picker is not the
-place to be clever: if COM is unavailable, if the interface is not there, if
-anything at all raises, the user still gets a dialog. `00-INDEX.md` Rule 1 in
-miniature — **an accelerator, never a dependency.**
+Every failure of the COM path returns to `askdirectory`. A folder picker is
+not the place to be clever: if COM is unavailable, if the interface is not
+there, if anything at all raises, the user still gets a dialog.
+`00-INDEX.md` Rule 1 in miniature — **an accelerator, never a dependency.**
+
+⛔ **AND THE LIMIT OF THAT SENTENCE, BECAUSE IT USED TO OVERCLAIM.** This
+said *"IT FALLS BACK, ALWAYS"*, and an adversary pointed out that `_classic`
+is on the `return` line, OUTSIDE the `try` — so if **Tk's own dialog** also
+fails, `ask()` raises and the caller gets an error box rather than a picker.
+That is the intended behaviour and it is deliberately not silent: `browse()`
+lets it reach the window's error reporter, because a picker that quietly
+does nothing is the *"feels discontinued"* complaint 4d was about. ⭐ What
+is guaranteed is **the modern path can never cost you a dialog**; what is
+not guaranteed is that a broken Tk still gives you one.
 """
 import sys
 
@@ -67,6 +102,23 @@ def verdict_of(hr):
         return u"cancel"
     return u"failed"
 
+
+#: 🚨 THERE WAS A `warm()` HERE AND IT DID NOTHING. RUNBOOK 4g.
+#:
+#: It created and released an `IFileOpenDialog` after the window opened, to
+#: pay the first Browse's cost early. ⛔ MEASURED by an adversarial pass, 20
+#: trials each in fresh processes, against a control that merely slept for the
+#: same 16 ms: **cold 141.3 ms mean, warm 129.2 ms, control 139.2 ms — p =
+#: 0.43, not separable.**
+#:
+#: ⭐ The decomposition says why. Of a first open: `CoInitializeEx` 2.6–5.3 ms,
+#: `CoCreateInstance` 9.3–10.6 ms — all `warm()` could pay — against
+#: `SHCreateItemFromParsingName` 36–62 ms and `Show` 45–348 ms, which it never
+#: touched. The stated mechanism was wrong, not merely the size of the effect.
+#:
+#: ⚠ It also had no check of its own (two mutants survived the whole suite) and
+#: its uncancelled `after` timer fired into destroyed interpreters, printing 22
+#: Tcl background errors per GREEN suite run.
 
 def _modern_is_possible():
     u"""Is there a modern picker on this platform at all? -> bool

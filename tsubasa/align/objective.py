@@ -18,7 +18,11 @@ at ±0.35 s chance falls to ~18% and real alignments score 45-90%.
 """
 import math
 
-import numpy as np
+# ⚠ DEFERRED — see `..lazynp`. numpy is used only inside functions here, and
+# the package `__init__` reaches this module on every `import tsubasa.<any>`.
+from ..lazynp import numpy_when_needed
+
+np = numpy_when_needed(globals())
 
 #: Cue-start match tolerance, seconds. A reference cue "lands" if a subtitle
 #: cue sits within this. ⚠ It is also what makes coarse search safe -- any real

@@ -181,6 +181,10 @@ TK_START_ATTEMPTS = 4
 def _tk_root():
     u"""A real Tk root — or a skip that tells the truth, or a failure. -> Tk
 
+    ⚠ **Every window this makes is on a desktop of its own and cannot be
+    seen or focused** — see `conftest.use_a_private_desktop`, and
+    `TSUBASA_TEST_SHOW_WINDOWS=1` to put them back on screen.
+
     ===================================================================
     🚨 IT SKIPPED AS "no display" ON A MACHINE THAT HAS ONE
     ===================================================================
@@ -269,6 +273,244 @@ def _tk_root():
 # ⭐ THE HELPER IS AN INSTRUMENT, SO IT IS CHECKED LIKE ONE. Tk's own flake
 # cannot be summoned on demand, so these hand `_tk_root` a Tk that fails the
 # way Tcl does — and each was watched go red against the helper it guards.
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_a_test_WINDOW_CANNOT_TOUCH_THE_SCREEN_SONIC_IS_USING():
+    u"""🚨 REPORTED: *"Please make all these tests occur out of focus, as
+    it interrupts what I am doing."*
+
+    This file maps **real** Tk windows on purpose — that is why it catches
+    things assertions do not — but every one of them used to flash up and take
+    the keyboard, so a full run interrupted whatever he was doing over a
+    hundred times.
+
+    ⛔ **THREE WINDOW-LEVEL FIXES WERE TRIED AND MEASURED TO FAIL**, and the
+    measurement is the reason this check exists in the shape it does:
+
+        -alpha 0.0                         invisible, still took the focus
+        + WS_EX_NOACTIVATE on <Map>        bits set, STILL took the focus —
+                                           the map had already handed it over
+        + withdraw, style, SW_SHOWNOACTIVATE   STILL took the focus: Tk
+                                           re-activates the window on update()
+
+    ⭐ `WS_EX_NOACTIVATE` stops Windows activating a window **when it is
+    shown**; it does not stop Tk asking for the foreground afterwards. The
+    thing that works is not a window property at all — the whole thread runs
+    on a **private desktop**, where there is no foreground to take.
+
+    ⚠ This asserts the DESKTOP, not a style bit, because the desktop is what
+    the guarantee rests on.
+    """
+    import ctypes
+    from ctypes import wintypes
+    import conftest
+
+    assert conftest.DESKTOP_MOVED == u"", \
+        u"the private desktop was not entered: %s" % conftest.DESKTOP_MOVED
+
+    u32 = ctypes.WinDLL(u"user32", use_last_error=True)
+    u32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+    u32.GetThreadDesktop.restype = wintypes.HANDLE
+    u32.GetUserObjectInformationW.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+        wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    u32.GetUserObjectInformationW.restype = wintypes.BOOL
+    u32.GetForegroundWindow.argtypes = []
+    u32.GetForegroundWindow.restype = wintypes.HWND
+    u32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    u32.GetAncestor.restype = wintypes.HWND
+    k32 = ctypes.WinDLL(u"kernel32", use_last_error=True)
+    k32.GetCurrentThreadId.restype = wintypes.DWORD
+
+    buf = ctypes.create_unicode_buffer(256)
+    got = wintypes.DWORD()
+    assert u32.GetUserObjectInformationW(
+        u32.GetThreadDesktop(k32.GetCurrentThreadId()),
+        conftest.UOI_NAME, buf, ctypes.sizeof(buf), ctypes.byref(got)), \
+        u"could not read the thread's desktop"
+    ours = buf.value
+
+    # 🚨 COMPARING `ours` TO `conftest.DESKTOP_NAME` WAS THE ORIGINAL
+    # CHECK AND IT WAS WORTHLESS: it read the name out of `conftest` and
+    # compared it to the name in `conftest`, so it passed for ANY value —
+    # including `"Default"`, which is Sonic's own desktop. `CreateDesktopW`
+    # OPENS an existing desktop rather than failing, so that is a real
+    # reachable state, not a hypothetical. Proven by an adversary.
+    #
+    # ⭐ THE ONLY MEANINGFUL COMPARISON IS AGAINST THE DESKTOP RECEIVING
+    # THE USER'S INPUT, which is what `OpenInputDesktop` answers. That is
+    # the thing the whole feature is about: not "are we somewhere named X"
+    # but "are we somewhere that is NOT where he is typing."
+    u32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL,
+                                     wintypes.DWORD]
+    u32.OpenInputDesktop.restype = wintypes.HANDLE
+    u32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    u32.CloseDesktop.restype = wintypes.BOOL
+
+    DESKTOP_READOBJECTS = 0x0001
+    inp = u32.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
+    if not inp:
+        pytest.skip(u"cannot open the input desktop (locked session?)")
+    try:
+        other = ctypes.create_unicode_buffer(256)
+        assert u32.GetUserObjectInformationW(
+            inp, conftest.UOI_NAME, other, ctypes.sizeof(other),
+            ctypes.byref(got)), u"could not name the input desktop"
+        assert ours != other.value, (
+            u"the checks are running on %r, which IS the desktop "
+            u"receiving Sonic's keyboard — every test window will "
+            u"interrupt him" % ours)
+    finally:
+        u32.CloseDesktop(inp)
+
+    # ⛔ AND NOT THE VACUOUS VERSION. `GetForegroundWindow()` returns None
+    # on a private desktop UNCONDITIONALLY — a desktop nobody is viewing
+    # has no foreground by definition — so `assert GetForegroundWindow() !=
+    # hwnd` held for every reachable state. An adversary made the window
+    # call `lift()`, `focus_force()` and `SetForegroundWindow()` immediately
+    # before it, and the assertion still passed. ⭐ The desktop comparison
+    # above is what that assertion was TRYING to say.
+    root = _tk_root()
+    try:
+        root.update()
+        hwnd = u32.GetAncestor(wintypes.HWND(root.winfo_id()), 2)
+        assert hwnd, u"the window has no top-level"
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_hidden_windows_have_an_OFF_SWITCH(monkeypatch):
+    u"""⛔ *ASSERT THE OUTPUT, THEN LOOK AT IT* is paid-for doctrine here —
+    fifty green checks once sat over a header running off the screen. A harness
+    that made the window permanently unlookable-at would quietly retire that,
+    so `TSUBASA_TEST_SHOW_WINDOWS=1` puts every window back on Sonic's own
+    desktop, visible and normal.
+
+    ⚠ The switch is read ONCE, before any window exists, because
+    `SetThreadDesktop` only works on a thread that has none — so this drives
+    the decision, which is the part that can regress, not a second move.
+    """
+    import conftest
+
+    monkeypatch.setenv(conftest.SHOW_WINDOWS, u"1")
+    assert conftest.SHOW_WINDOWS in conftest.why_not_a_private_desktop(), \
+        u"the off switch does not turn it off"
+
+    monkeypatch.delenv(conftest.SHOW_WINDOWS, raising=False)
+    assert conftest.why_not_a_private_desktop() == u"", \
+        u"it refuses the private desktop with the switch unset"
+
+    # ⚠ AND THE PLATFORM ARM, which is unreachable on the machine that
+    # runs it. Deleting the `sys.platform` guard was measured SURVIVING the
+    # whole suite here, because here it is always Windows — so the only way
+    # to check it is to say we are not. Without the guard a Linux job walks
+    # into `ctypes.WinDLL`, which does not exist there.
+    monkeypatch.setattr(conftest.sys, u"platform", u"linux")
+    assert conftest.why_not_a_private_desktop() == u"not Windows", \
+        u"off Windows it still tries to create a desktop"
+
+
+def test_a_desktop_that_CANNOT_be_entered_SAYS_SO_instead_of_lying(monkeypatch):
+    u"""🚨 WRITTEN BECAUSE TWO MUTANTS SURVIVED. Dropping the `CreateDesktopW`
+    result, and swallowing a failed `SetThreadDesktop`, both left every other
+    check green — because on this machine neither call ever fails, so the
+    error arms are code nothing runs.
+
+    ⛔ **And the failure they let through is exactly the reported complaint,
+    silently.** `use_a_private_desktop()` would return `u""` — *moved, all
+    fine* — while the thread was still on Sonic's own desktop and every window
+    went on taking his keyboard. `DESKTOP_MOVED` is what the check above
+    trusts, so a lie here disarms that one too.
+
+    ⭐ So both arms are driven with a Win32 that fails on demand.
+    """
+    import conftest
+
+    def win32_where(create, set_thread):
+        class Fn(object):
+            def __init__(self, value):
+                self.value = value
+
+            def __call__(self, *a, **k):
+                return self.value
+
+        dll = type(str(u"FakeUser32"), (object,), {})()
+        dll.CreateDesktopW = Fn(create)
+        dll.SetThreadDesktop = Fn(set_thread)
+        return lambda *a, **k: dll
+
+    monkeypatch.delenv(conftest.SHOW_WINDOWS, raising=False)
+
+    # 🚨 THE DECLARATIONS ARE LOAD-BEARING AND NOTHING CHECKED THEM.
+    # `conftest.py` says so in capitals — *undeclared, ctypes assumes int
+    # and truncates a 64-bit handle* — and an adversary deleted BOTH
+    # `CreateDesktopW.restype` and `SetThreadDesktop.argtypes` with a fully
+    # green run, because every desktop handle on this machine is small
+    # (304, 360) and truncation is invisible until it is not.
+    declared = {}
+
+    class _Recording(object):
+        def __init__(self, name, value):
+            self._name, self._value = name, value
+
+        def __setattr__(self, key, value):
+            if key in (u"argtypes", u"restype"):
+                declared.setdefault(self._name, set()).add(key)
+            object.__setattr__(self, key, value)
+
+        def __call__(self, *a, **k):
+            return self._value
+
+    recorder = type(str(u"RecordingUser32"), (object,), {})()
+    recorder.CreateDesktopW = _Recording(u"CreateDesktopW", 7)
+    recorder.SetThreadDesktop = _Recording(u"SetThreadDesktop", 1)
+    monkeypatch.setattr(conftest.ctypes, u"WinDLL",
+                        lambda *a, **k: recorder, raising=False)
+    assert conftest.use_a_private_desktop() == u""
+    for fn in (u"CreateDesktopW", u"SetThreadDesktop"):
+        assert declared.get(fn) == {u"argtypes", u"restype"}, (
+            u"%s is called with %s declared — an undeclared 64-bit handle "
+            u"is truncated silently and the windows come back to Sonic's "
+            u"desktop" % (fn, sorted(declared.get(fn, ())) or u"nothing"))
+
+    for label, create, set_thread in ((u"CreateDesktop", 0, 1),
+                                      (u"SetThreadDesktop", 41, 0)):
+        # ⚠ `raising=False`: `ctypes.WinDLL` DOES NOT EXIST off Windows, and
+        # without this the check dies with AttributeError on eight Linux and
+        # macOS jobs — the identical mistake `test_off_WINDOWS_the_picker_...`
+        # exists to record.
+        monkeypatch.setattr(conftest.ctypes, u"WinDLL",
+                            win32_where(create, set_thread), raising=False)
+        reason = conftest.use_a_private_desktop()
+        assert reason, (
+            u"%s failed and it reported SUCCESS — the windows are back on "
+            u"Sonic's desktop and nothing says so" % label)
+        assert label in reason, \
+            u"the reason does not name what failed: %r" % (reason,)
+
+
+def test_entering_the_private_desktop_can_NEVER_fail_the_run(monkeypatch):
+    u"""🚨 `_has_icon` called Win32 with no `argtypes`, raised
+    `OverflowError: int too long to convert`, and **took down a whole smoke
+    run** — 44 unrelated checks reported nothing. A comfort feature that can
+    abort its host is worse than no comfort feature.
+    """
+    import conftest
+
+    class Hostile(object):
+        def __getattr__(self, name):
+            raise RuntimeError(u"no")
+
+    monkeypatch.setattr(conftest.ctypes, u"WinDLL",
+                        lambda *a, **k: Hostile(), raising=False)
+    monkeypatch.delenv(conftest.SHOW_WINDOWS, raising=False)
+    reason = conftest.use_a_private_desktop()
+    assert isinstance(reason, type(u"")) and reason, \
+        u"a broken Win32 did not come back with a reason: %r" % (reason,)
+
 
 def test_tk_root_RETRIES_a_start_failure_and_says_so_on_one_line(monkeypatch):
     tk = pytest.importorskip(u"tkinter")
@@ -1190,8 +1432,20 @@ def test_shade_LIFTS_a_near_black_ground_visibly(monkeypatch):
 
     # ⛔ AND IT MUST NOT OVERSHOOT. A lift that saturates turns a subtle
     # affordance into a flash.
+    #
+    # 🚨 THE OLD FORM OF THIS WAS ARITHMETICALLY INCAPABLE OF FAILING:
+    # it sliced two hex characters and asserted `<= 255`, and the maximum
+    # of every two-character hex string IS 255. An adversary broke `_shade`
+    # into emitting `#12e12d12d` — ten characters — and the guard passed;
+    # worse, **Tk ACCEPTS that string** as a 12-bit-per-channel colour and
+    # silently renders the wrong one. ⭐ So the SHAPE is what has to be
+    # asserted, not a bound that the parse already guarantees.
+    assert len(ground) == 7 and ground[0] == u"#", (
+        u"_shade produced %r, which is not #rrggbb — Tk will accept some "
+        u"longer forms and render a different colour without complaining"
+        % (ground,))
     for channel in (ground[1:3], ground[3:5], ground[5:7]):
-        assert int(channel, 16) <= 255
+        assert 0 <= int(channel, 16) <= 255
 
     assert APP._shade(u"#ffffff", 0.10) == u"#ffffff", u"white cannot lift"
     assert APP._shade(u"#000000", -0.10) == u"#000000", u"black cannot sink"
@@ -1304,6 +1558,179 @@ def test_the_hover_reads_the_CURRENT_colour_not_the_one_it_was_built_with(
         assert b.cget(u"bg") == APP.BAD, (
             u"leaving restored %s, not the colour the button actually had"
             % b.cget(u"bg"))
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_PRESS_state_is_VISIBLE_and_is_not_just_the_hover_colour(tmp_path):
+    u"""🚨 PRESSING SYNC OR STOP DID NOTHING VISIBLE, AND 126 CHECKS WERE
+    GREEN OVER IT — because nothing asserted `activebackground` at all.
+
+    `_hover_of` DEEPENS a bright fill by `PRESS_SINK`, and the press state was
+    `_shade(base, -PRESS_SINK)` — the same expression. Measured before the fix:
+    **identical on 7 of 11 palette colours**, which is every bright fill in the
+    window (ACCENT, BAD, OK, CUT, ERR, INK, DIM) — i.e. on exactly the buttons
+    a person clicks. Found by an adversarial pass.
+
+    ⭐ **THE PAIR THAT MATTERS IS HOVER → PRESS, NOT REST → PRESS**, because you
+    are always hovering when you press. That is what this asserts.
+    """
+    from tsubasa.gui import app as APP
+
+    palette = [n for n in dir(APP)
+               if n.isupper() and isinstance(getattr(APP, n), str)
+               and getattr(APP, n).startswith(u"#")]
+    assert len(palette) >= 8, u"the palette did not resolve: %r" % (palette,)
+
+    for name in palette:
+        base = getattr(APP, name)
+        hover, press = APP._hover_of(base), APP._press_of(base)
+        assert press != hover, (
+            u"%s: pressing looks identical to hovering (%s) — the button has "
+            u"no press feedback" % (name, press))
+        assert press != base, u"%s: pressing looks identical to resting" % name
+
+    # ⭐ AND ON A REAL WIDGET, not only in the arithmetic.
+    root, app = _app(tmp_path)
+    root.update()
+    try:
+        for btn in (app.sync_btn, app.browse_btn):
+            bg = str(btn.cget(u"bg"))
+            active = str(btn.cget(u"activebackground"))
+            assert active == APP._press_of(bg), (
+                u"%r presses to %s, which is not the press colour for %s"
+                % (str(btn.cget(u"text")), active, bg))
+            assert active != APP._hover_of(bg)
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_hovering_TWICE_without_leaving_does_not_stick_the_button_lit(tmp_path):
+    u"""🚨 IT RATCHETED. `enter` wrote `_resting` unconditionally from the
+    CURRENT background — which after one hover is the hover colour — so a
+    second `<Enter>` without a `<Leave>` between them captured the wrong
+    resting colour and `<Leave>` restored the button to *lit*. And it
+    compounded. Measured on EDGE before the fix:
+
+        1 x <Enter> then <Leave>:  #2b3038 -> #2b3038   ok
+        2 x <Enter> then <Leave>:  #2b3038 -> #40454c   *** STUCK ***
+        3 x <Enter> then <Leave>:  #2b3038 -> #53585e   *** STUCK ***
+
+    ⚠ The old check sent exactly one `<Enter>` and one `<Leave>`, so it could
+    not see this. Tk delivers a second `<Enter>` without an intervening
+    `<Leave>` across a grab/ungrab, which is what a modal dialog does.
+    """
+    root, app = _app(tmp_path)
+    root.update()
+    try:
+        btn = app.browse_btn
+        base = str(btn.cget(u"bg"))
+        for repeats in (1, 2, 3):
+            btn.configure(bg=base)
+            btn._resting = None
+            for _ in range(repeats):
+                btn.event_generate(u"<Enter>")
+                root.update_idletasks()
+            btn.event_generate(u"<Leave>")
+            root.update_idletasks()
+            assert str(btn.cget(u"bg")) == base, (
+                u"%d <Enter> then <Leave> left the button at %s, not %s"
+                % (repeats, btn.cget(u"bg"), base))
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_the_press_colour_FOLLOWS_the_button_when_Sync_becomes_Stop(tmp_path):
+    u"""🚨 A RED STOP BUTTON FLASHED BLUE WHEN PRESSED. `_repaint` set `bg`
+    accent → red and never touched `activebackground`, so the press colour was
+    the one from before the run started — stale for the whole run, until a
+    hover in-and-out happened to repair it (`_interactive`'s `<Leave>` was the
+    only writer).
+
+    ⭐ This is the general shape worth remembering: **a derived attribute that
+    only one event handler maintains is stale everywhere that handler does not
+    run.**
+    """
+    from tsubasa.gui import app as APP
+    root, app = _app(tmp_path)
+    root.update()
+    try:
+        # ⚠ `running` is a read-only property derived from `runner`, so it
+        # is driven the way the app drives it. That is the better check
+        # anyway — assigning to it would have tested a field the app does
+        # not have.
+        class _Going(object):
+            def finished(self):
+                return None
+
+        for runner, want in ((None, APP.ACCENT), (_Going(), APP.BAD)):
+            app.runner = runner
+            assert app.running is (runner is not None)
+            app._repaint()
+            root.update_idletasks()
+            assert str(app.sync_btn.cget(u"bg")) == want
+            assert str(app.sync_btn.cget(u"activebackground")) == \
+                APP._press_of(want), (
+                    u"running=%s: the button is %s but presses to %s, which "
+                    u"belongs to the other state"
+                    % (app.running, want,
+                       app.sync_btn.cget(u"activebackground")))
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_a_run_that_starts_UNDER_THE_POINTER_survives_the_pointer_leaving(
+        tmp_path):
+    u"""🚨 THE COMMON PATH, AND IT WAS BROKEN. You click **Sync** — so the
+    pointer is on the button — the run starts and `_repaint` turns it red
+    **Stop**. Then you move the mouse away and it turned back into a blue
+    **Sync** while the run was still going.
+
+        rest #6aa8d8 -> hover #629bc7 -> run starts #e0736c
+        -> pointer leaves #6aa8d8   *** blue again, mid-run ***
+
+    `<Leave>` restored `_resting`, captured BEFORE the repaint.
+
+    ⭐ **FOUND BY CHASING A MUTANT THAT SURVIVED.** The mutation said
+    `<Leave>`'s press-colour repair was not load-bearing; the reason it was
+    not was this defect sitting underneath it. `doctrine/verification`: *a
+    surviving mutant is information either way — find out which.*
+
+    ⚠ The sibling check drives repaint-THEN-hover, which always worked.
+    This one drives hover-THEN-repaint, which is the order a person makes.
+    """
+    from tsubasa.gui import app as APP
+
+    root, app = _app(tmp_path)
+    root.update()
+    try:
+        btn = app.sync_btn
+        btn.event_generate(u"<Enter>")          # the pointer is on Sync
+        root.update_idletasks()
+
+        class _Going(object):
+            def finished(self):
+                return None
+
+        app.runner = _Going()                   # the click started a run
+        app._repaint()
+        root.update_idletasks()
+        assert str(btn.cget(u"bg")) == APP.BAD
+
+        btn.event_generate(u"<Leave>")          # and you move away
+        root.update_idletasks()
+        assert str(btn.cget(u"bg")) == APP.BAD, (
+            u"the running Stop button went back to %s when the pointer "
+            u"left — it should still be red" % btn.cget(u"bg"))
+        assert str(btn.cget(u"activebackground")) == APP._press_of(APP.BAD)
     finally:
         root.destroy()
 
@@ -1424,12 +1851,50 @@ def test_the_credit_sits_at_the_very_bottom_right_and_links_out(tmp_path):
         assert link.cget(u"cursor") == u"hand2"
         assert link.cget(u"fg") == APP.ACCENT
 
+        # 🚨 THIS USED TO REBIND THE LINK AND THEN ASSERT ITS OWN LAMBDA.
+        # `bind()` without `add="+"` DISCARDS the handler the app
+        # installed, so the check proved only that Tk delivers
+        # `<Button-1>` to a Label. Measured by an adversary: deleting the
+        # app's real binding, pointing the URL at `http://evil.example/pwn`,
+        # and rebinding the trigger from a CLICK to `<Enter>` — so that
+        # merely moving the pointer across the credit launched a browser —
+        # every one of them stayed green.
+        #
+        # ⭐ ONLY THE OPENER IS STUBBED NOW. The binding, the event and the
+        # URL are all the app's own.
+        # ⚠ THE BROWSER IS THE SEAM, not `_open_url`. `_link` closes over
+        # the opener at construction time, so replacing `app._open_url`
+        # afterwards cannot reach the binding — which is exactly why the
+        # old version of this check rebound the label instead, and thereby
+        # stopped testing the app at all. Stubbing `webbrowser.open` drives
+        # the WHOLE real chain: the app's binding, the app's `_open_url`,
+        # and the app's URL.
+        import webbrowser
+
         opened = []
-        app._open_url = lambda url: opened.append(url)
-        link.bind(u"<Button-1>", lambda _e: app._open_url(APP.HOME_URL))
-        link.event_generate(u"<Button-1>")
+        real_open = webbrowser.open
+        webbrowser.open = lambda url, *a, **k: opened.append(url)
+        try:
+            link.event_generate(u"<Button-1>")
+        finally:
+            webbrowser.open = real_open
         root.update_idletasks()
-        assert opened == [APP.HOME_URL], opened
+        assert opened == [APP.HOME_URL], (
+            u"clicking the credit link opened %r, not the project" % opened)
+
+        # ⛔ AND IT MUST NOT FIRE ON HOVER. A browser launching because the
+        # pointer crossed a label is a real shape of this defect, and the
+        # old check could not tell the two events apart.
+        opened[:] = []
+        webbrowser.open = lambda url, *a, **k: opened.append(url)
+        try:
+            link.event_generate(u"<Enter>")
+            link.event_generate(u"<Motion>")
+            link.event_generate(u"<Leave>")
+        finally:
+            webbrowser.open = real_open
+        assert opened == [], (
+            u"moving the pointer over the credit opened %r" % opened)
         assert APP.HOME_URL.startswith(u"https://github.com/")
     finally:
         root.destroy()
@@ -1437,23 +1902,25 @@ def test_the_credit_sits_at_the_very_bottom_right_and_links_out(tmp_path):
 
 @pytest.mark.skipif(not sys.platform.startswith("win"),
                     reason=u"needs a display")
-def test_browse_owns_its_dialog_starts_somewhere_and_always_frees_the_cursor(
-        tmp_path):
+def test_browse_owns_its_dialog_and_starts_somewhere(tmp_path):
     u"""🚨 REPORTED: *"when you click on browse it has the thinking icon, the
     gui freezes."*
 
-    ⚠ MEASURED, and it is NOT frozen: 29 `after()` ticks ran during 3.4 s of
-    dialog and `IsHungAppWindow` stayed False. ⛔ So threading was never the
-    fix — a native modal must pump messages on the thread owning its parent.
-    What was wrong: the dialog had **no owner**, so Windows could not block
-    the right window; and it started **nowhere**, so it walked the whole
-    shell namespace behind a wait cursor.
+    ⚠ MEASURED, and it was never hung: `IsHungAppWindow` stayed False
+    throughout. ⛔ So threading was never the fix, and could not have been — a
+    native modal must pump messages on the thread owning its parent. Two real
+    things were wrong: the dialog had **no owner**, so Windows could not block
+    the right window; and it started **nowhere**, so it walked the whole shell
+    namespace behind a wait cursor.
 
-    ⭐ The `finally` is the half worth checking: a window left holding the
-    busy cursor IS the reported complaint.
+    ⛔ AND THERE IS DELIBERATELY NO BUSY CURSOR — see
+    `test_a_timer_CANNOT_fire_while_the_modern_dialog_is_up` below, which is
+    the check that stops one being re-added.
     """
     from tsubasa.gui import app as APP
+
     root, app = _app(tmp_path)
+    root.update()
     try:
         seen = {}
 
@@ -1472,12 +1939,12 @@ def test_browse_owns_its_dialog_starts_somewhere_and_always_frees_the_cursor(
 
         assert seen[u"parent"] == root.winfo_id(), u"the dialog is not owned"
         assert seen[u"start"] == str(tmp_path), u"it starts nowhere"
-        assert seen[u"cursor"] == u"watch", (
-            u"the busy cursor was never shown, so the wait is unexplained")
-        assert str(root.cget(u"cursor")) == u"", u"the cursor was left busy"
+        assert seen[u"cursor"] == u"", (
+            u"a busy cursor is being set again: %r" % seen[u"cursor"])
+        assert str(root.cget(u"cursor")) == u"", u"the cursor was left set"
 
-        # ⛔ AND ON THE FAILING PATH. The dialog can raise; the cursor may not
-        # survive it.
+        # ⛔ AND ON THE FAILING PATH. The dialog can raise, and the window must
+        # come out of it in the state it went in.
         def explodes(parent=None, title=u"", start=u""):
             raise OSError(u"the shell is having a day")
 
@@ -1487,10 +1954,209 @@ def test_browse_owns_its_dialog_starts_somewhere_and_always_frees_the_cursor(
                 app.browse()
         finally:
             APP._folderpick.ask = monkey
-        assert str(root.cget(u"cursor")) == u"", (
-            u"a dialog that raised left the window holding the busy cursor")
+        assert str(root.cget(u"cursor")) == u""
     finally:
         root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs a display")
+def test_browse_SCHEDULES_NO_TIMER_around_the_picker(tmp_path):
+    u"""🚨 THIS REPLACES A CHECK THAT DID NOT WORK, AND THE STORY IS THE
+    POINT.
+
+    4d shipped a delayed busy cursor built on a true number — *29 Tk timer
+    ticks during 3.4 s of open dialog* — measured against
+    `filedialog.askdirectory()`, **the dialog `folderpick` had replaced
+    minutes earlier, in the same step, by the same agent.** Re-measured on
+    the shipped path, same harness, only the dialog differing:
+
+        folderpick.ask()  (IFileOpenDialog)   0 ticks in 2.26 s
+        filedialog.askdirectory()            48 ticks in 2.30 s
+
+    ⛔ The feature could never fire, and it shipped. ⭐ **A measurement is
+    about the thing it was measured on.**
+
+    🚨**AND THE CHECK WRITTEN TO STOP IT BEING REBUILT DID NOT STOP IT.**
+    It opened no dialog, never imported `folderpick`, and asserted that a
+    timer does not fire during `time.sleep` — true of every single-threaded
+    Python program ever written. Two adversaries independently rebuilt the
+    dead feature verbatim and the suite stayed green; it was also flaky,
+    failing 4 runs in 12 under load and being mis-attributed to two
+    unrelated mutants.
+
+    ⭐ **SO THIS ASSERTS THE MECHANISM INSTEAD OF THE FOLKLORE:** a busy
+    cursor needs a timer, so `browse()` must schedule none. That is a fact
+    about OUR code, checkable without a dialog and without Tk's scheduler
+    being the subject.
+    """
+    from tsubasa.gui import app as APP
+
+    root, app = _app(tmp_path)
+    root.update()
+    try:
+        scheduled = []
+        real_after = root.after
+
+        def spy(*a, **k):
+            if a and isinstance(a[0], int):
+                scheduled.append(a[0])
+            return real_after(*a, **k)
+
+        seen = {}
+
+        def blocking_ask(parent=None, title=u"", start=u""):
+            # ⚠ THE FAKE BLOCKS, because the real one does. The previous
+            # fake returned in microseconds, so `assert cursor == ""` could
+            # only ever see an UNCONDITIONAL cursor and never a delayed one
+            # — wrong in exactly the property the check was about. That is
+            # the same mistake as the fake that pumped the event loop.
+            time.sleep(0.40)
+            seen[u"cursor"] = str(root.cget(u"cursor"))
+            return str(tmp_path)
+
+        monkey = APP._folderpick.ask
+        APP._folderpick.ask = blocking_ask
+        root.after = spy
+        try:
+            app.browse()
+        finally:
+            APP._folderpick.ask = monkey
+            root.after = real_after
+
+        assert scheduled == [], (
+            u"browse() scheduled %r — a delayed busy cursor is being "
+            u"rebuilt. It CANNOT fire: IFileOpenDialog::Show runs its modal "
+            u"loop on the Tk thread, measured at 0 ticks. Re-measure "
+            u"against the REAL dialog before reinstating anything."
+            % (scheduled,))
+        assert seen.get(u"cursor") == u"", (
+            u"the cursor was %r while the picker was up"
+            % (seen.get(u"cursor"),))
+        assert str(root.cget(u"cursor")) == u""
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"IFileOpenDialog is a Windows COM interface")
+def test_the_COM_half_of_the_picker_ACTUALLY_RUNS_without_a_dialog(tmp_path):
+    u"""🚨 NOTHING IN THIS SUITE EXECUTED THE COM HALF. MEASURED: the whole
+    GUI suite ran **31 lines** of `folderpick.py`, and `_modern`,
+    `_modern_is_possible`, `_classic`, `_guid`, `_item_from_path`, `_path_of`
+    and `_release` had **zero** — the entire thing RUNBOOK 4d exists to add.
+    Both checks that touch the gate patch AROUND it: one forces it True, the
+    other forces it False, and neither runs the real one. An adversary set
+    `_modern_is_possible()` to `return False`, reverting every Windows user to
+    the 2001 dialog, and the suite stayed green.
+
+    ⛔ **GREEN SAYS NOTHING ABOUT CODE THAT DOES NOT RUN.** Found by
+    line-tracing, now `_work/probe_4i_5_what_the_suite_never_runs.py`.
+
+    ⭐ **AND IT DOES NOT NEED A DIALOG.** `Show` is the only part that does;
+    the shell-item plumbing underneath it round-trips a path through real COM
+    with no window at all — which is what this drives. A broken CLSID, a
+    wrong vtable index or an undeclared argtype fails here instead of in front
+    of a person.
+    """
+    from tsubasa.gui import folderpick as FP
+
+    assert FP._modern_is_possible() is True, (
+        u"the modern picker is switched off on Windows — every user is back "
+        u"on the 2001 dialog")
+
+    # ⛔ COM MUST BE INITIALISED ON THIS THREAD FIRST, exactly as `_modern`
+    # does before it touches anything. Without it
+    # `SHCreateItemFromParsingName` fails and `_item_from_path` returns
+    # None — and because that function swallows everything by design, the
+    # failure is silent. ⚠ That is a real property worth knowing: the
+    # "never raises" contract means a COM failure reads exactly like a
+    # deleted folder, so the picker would start nowhere and say nothing.
+    import ctypes
+
+    COINIT_APARTMENTTHREADED = 0x2
+    RPC_E_CHANGED_MODE = 0x80010106
+    hr = ctypes.windll.combase.CoInitializeEx(
+        None, COINIT_APARTMENTTHREADED)
+    # ⚠ A thread already in MTA answers RPC_E_CHANGED_MODE and STAYS MTA;
+    # the shell functions still work, so that is not a failure here.
+    assert hr in (0, 1, RPC_E_CHANGED_MODE - (1 << 32), RPC_E_CHANGED_MODE), \
+        u"CoInitializeEx said 0x%08x" % (hr & 0xFFFFFFFF)
+
+    folder = tmp_path / u"日本語 folder"     # ⚠ not ASCII, on purpose
+    folder.mkdir()
+
+    item = FP._item_from_path(str(folder))
+    assert item, u"SHCreateItemFromParsingName returned nothing for a real folder"
+    try:
+        SIGDN_FILESYSPATH = 0x80058000
+        back = FP._path_of(item, SIGDN_FILESYSPATH)
+        assert back == str(folder), (
+            u"the path did not survive the round trip: %r -> %r"
+            % (str(folder), back))
+    finally:
+        FP._release(item)
+
+    # ⛔ AND THE DOCUMENTED NON-RAISING CONTRACT, which is what lets a
+    # deleted start folder still open the picker somewhere sensible.
+    assert FP._item_from_path(str(tmp_path / u"gone")) is None
+
+    # ⚠ AN EMPTY PATH IS NOT IN THAT CONTRACT, and asserting it was
+    # WAS MY MISTAKE, NOT THE CODE'S: `""` parses to a real shell item (the
+    # desktop root), so a check demanding None there would have been
+    # demanding a behaviour change. `_modern` never asks — it guards on
+    # `if start:` first — so THAT is the property worth pinning, and it is
+    # pinned where it can actually regress.
+    import inspect
+
+    body = inspect.getsource(FP._modern)
+    assert u"if start:" in body, (
+        u"_modern no longer guards the start folder, so an empty start "
+        u"would open the picker at the desktop root instead of nowhere")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"needs the Windows shell")
+def test_the_classic_fallback_REALLY_OPENS_something(monkeypatch, tmp_path):
+    u"""⚠ `_classic` was never executed either — both fallback checks
+    monkeypatch it away, so *"it ALWAYS falls back"* rested on a function no
+    check had ever called.
+
+    ⛔ A REAL `askdirectory` CANNOT RUN HERE — it is modal and nothing could
+    close it. So this drives the seam one layer down: `_classic` must call
+    Tk's dialog with the arguments it claims to, and must turn a cancel
+    (`askdirectory` returns `""` or `()`) into `u""` rather than into a
+    traceback.
+    """
+    from tkinter import filedialog
+    from tsubasa.gui import folderpick as FP
+
+    seen = {}
+
+    def fake_askdirectory(**kw):
+        seen.update(kw)
+        return seen.pop(u"_answer", str(tmp_path))
+
+    monkeypatch.setattr(filedialog, u"askdirectory", fake_askdirectory)
+
+    assert FP._classic(u"Pick one", str(tmp_path)) == str(tmp_path)
+    assert seen[u"title"] == u"Pick one"
+    assert seen[u"initialdir"] == str(tmp_path), (
+        u"the fallback starts nowhere, which is the defect 4d fixed for the "
+        u"modern path")
+
+    # ⚠ NO `initialdir` KEY AT ALL when there is no start folder — passing
+    # `initialdir=""` is not the same call.
+    seen.clear()
+    FP._classic(u"Pick one", u"")
+    assert u"initialdir" not in seen, seen
+
+    # ⛔ AND BOTH SHAPES OF CANCEL. Tk returns `""` on some platforms and an
+    # empty TUPLE on others, and `or u""` is what flattens them.
+    for cancelled in (u"", ()):
+        monkeypatch.setattr(filedialog, u"askdirectory",
+                            lambda **kw: cancelled)
+        assert FP._classic(u"t", u"") == u""
 
 
 def test_the_folder_picker_ALWAYS_falls_back_and_says_why(monkeypatch):
