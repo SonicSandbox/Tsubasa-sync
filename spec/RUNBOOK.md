@@ -1402,7 +1402,7 @@ branch has never run, and it decides the build:** a frozen GUI looks for
 
 | | |
 | --- | --- |
-| **The zip** | **29.0 MB** — well under `10-deployment.md`'s 40–90 MB estimate. `--onedir`, `tsubasa.exe` (console) + `tsubasa-gui.exe` (windowed) + `_internal/` + `LICENSE` + `THIRD_PARTY_LICENSES.md` + `README-FIRST.txt` |
+| **The zip** | **29.0 MB LOCALLY, 36.9 MB AS PUBLISHED** — see the correction below. **29.0 MB** — well under `10-deployment.md`'s 40–90 MB estimate. `--onedir`, `tsubasa.exe` (console) + `tsubasa-gui.exe` (windowed) + `_internal/` + `LICENSE` + `THIRD_PARTY_LICENSES.md` + `README-FIRST.txt` |
 | **Cold start** | **0.30–0.32 s** to a printed `--help`, measured in the smoke test rather than estimated |
 | **`self_check()` inside the frozen app** | `ok`, **aliases 221258/221258, vocabulary 176/176** — the shipped hook needed no `--add-data` |
 | **The tooling, all clone-only** | `packaging/tsubasa.spec` (two `Analysis`, one `COLLECT`) · `entry_cli.py` · `entry_gui.py` · `package_standalone.py` (zip + `SHA256SUMS` + the licences) · `smoke_standalone.py` (drives the artefact) · `_work/release/build_standalone.sh` (the local driver) |
@@ -1417,6 +1417,20 @@ Japanese rendering clean in the rows. ⚠ **And a control run**, same launch wit
 the click, wrote nothing — so the button is what did it.
 
 ### 🚨 A CLAIM THIS STEP MADE AND MEASUREMENT DISPROVED — `MERGE` does nothing
+
+🚨 **AND THE 29.0 MB IS THE LOCAL BUILD, NOT THE ONE ANYBODY DOWNLOADS.**
+Measured from the release assets on 2026-09-18, straight off the GitHub API:
+
+    v0.1.5  tsubasa-windows-x64.zip   36.9 MB
+    v0.1.6  tsubasa-windows-x64.zip   36.9 MB
+
+⛔ **27% larger than every number in this pack**, identical across two
+releases, and it went unnoticed through 0.1.5's own published-bytes
+verification — which downloaded that zip, checksummed it and drove it, and
+never compared its SIZE to the figure the docs were quoting. ⭐ The freeze that
+matters is the one CI does on `windows-latest`, not the one this machine does;
+a local artefact is evidence about a local machine. **Quote the published
+number, or say which one you mean.**
 
 ⛔ **This section first said the 29 MB was `MERGE`'s doing. It is not.** An
 adversary rebuilt the identical spec with only the `MERGE(...)` call removed:
@@ -1969,6 +1983,44 @@ head fixes it. Its species:
 lazy-numpy (`probe_4i_7`). Three survivors dropped as EQUIVALENT with the
 reason recorded inline — *a mutant that cannot fail is noise, and noise is what
 gets a check switched off.*
+
+---
+
+### ⛔ 4i, THE TAIL — TWO FINDINGS I SUMMARISED AS *"LATENT"* AND DID NOT FIX
+
+Both were in the adversaries' reports. Both got a line in my summary and no
+edit. ⭐ **That is the same shortcut that produced half the findings in the
+first place**, and it survived until Sonic asked *"is this complete?"* and the
+answer had to be checked rather than asserted.
+
+**1. The documented escape hatch guaranteed a red run.**
+`TSUBASA_TEST_SHOW_WINDOWS=1` exists so somebody can LOOK at the real window —
+paid-for doctrine here. But `test_a_test_WINDOW_CANNOT_TOUCH_THE_SCREEN...`
+asserted `DESKTOP_MOVED == ""`, which is deliberately false when the switch is
+set. ⛔ So *look at it* and *run the suite green* were mutually exclusive, and
+anyone leaving the variable set learns to ignore a permanent failure. It now
+**skips and says why**. ⚠ **The off switch was mine and so was the defect in
+it** — adding an escape hatch is not finished until you have run with it on.
+
+**2. `_hover_of` raised on every ordinary Tk colour, inside an event handler.**
+
+    #fff  #abc  red  white  gray50  SystemButtonFace   -> ValueError
+
+`enter` calls `_hover_of(widget.cget("bg"))` and Tk returns whatever the widget
+holds. Latent only because every palette constant is 6-digit hex today — one
+stock widget, or one `#fff` in the palette, and every hover in the window
+throws into `report_callback_exception`.
+
+⭐ A PAINT PATH FAILS SOFT: `_channels()` parses `#rrggbb` and `#rgb`, and
+anything else comes back UNCHANGED from `_shade`, so that widget simply has no
+hover — a missing affordance rather than a traceback. ⚠ `#rgb` expands by
+**repetition** (`#fff` is white), not padding; getting that backwards would
+have been a silently wrong colour, which is worse than an error.
+
+**Green:** `gui` **134 checks**, full runner **39 suites / 1,694 checks / 0
+skips**. Probes re-run after the anchors moved: **8/8**, **4/6** (up from 3/6 —
+the platform mutant is now killed; the two survivors are the recorded
+equivalents), **3/3**.
 
 ---
 

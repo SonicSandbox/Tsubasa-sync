@@ -110,6 +110,26 @@ HOVER_LIFT = 0.10
 PRESS_SINK = 0.08
 
 
+def _channels(colour):
+    u"""`#rrggbb` or `#rgb` -> [r, g, b]. Anything else -> None.
+
+    ⚠ **`#rgb` IS A REAL TK FORM AND EXPANDS BY REPETITION**, not by padding:
+    `#fff` is `#ffffff`, not `#0f0f0f`. Getting that backwards would have been
+    a silently wrong colour rather than an error, which is worse.
+    """
+    if not isinstance(colour, type(u"")) or not colour.startswith(u"#"):
+        return None                      # `red`, `SystemButtonFace`, None, ""
+    digits = colour[1:]
+    if len(digits) == 3:
+        digits = u"".join(d * 2 for d in digits)
+    if len(digits) != 6:
+        return None                      # `#aabbccdd`, `#12e12d12d`, junk
+    try:
+        return [int(digits[i:i + 2], 16) for i in (0, 2, 4)]
+    except ValueError:
+        return None
+
+
 def _shade(colour, amount):
     u"""Move a `#rrggbb` toward white (amount > 0) or black (< 0). -> unicode
 
@@ -119,8 +139,19 @@ def _shade(colour, amount):
     value that is already tiny. Interpolating toward white gives every colour
     the same *perceptual* step regardless of where it started.
     """
-    colour = colour.lstrip(u"#")
-    parts = [int(colour[i:i + 2], 16) for i in (0, 2, 4)]
+    parts = _channels(colour)
+    if parts is None:
+        # ⛔ NOT OUR COLOUR TO SHADE — AND THIS RUNS IN AN EVENT HANDLER.
+        # `enter` calls `_hover_of(widget.cget("bg"))`, and Tk hands back
+        # whatever the widget holds: `#fff`, `red`, `gray50`,
+        # `SystemButtonFace` — all of which used to raise `ValueError` out
+        # of a `<Enter>` binding and into `report_callback_exception`.
+        # Every palette constant is 6-digit hex today, so it was latent;
+        # one stock widget or one `#fff` in the palette makes it live.
+        # ⭐ Returning the colour UNCHANGED means no hover on that widget,
+        # which is the pre-4d behaviour — a missing affordance, not a
+        # traceback. Found by an adversarial pass.
+        return colour
     target = 255 if amount >= 0 else 0
     weight = abs(amount)
     return u"#%02x%02x%02x" % tuple(
@@ -134,8 +165,13 @@ def _luma(colour):
     light and blue almost none, so a flat average calls this window's accent
     blue *brighter* than it looks and picks the wrong hover direction for it.
     """
-    colour = colour.lstrip(u"#")
-    r, g, b = (int(colour[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    parts = _channels(colour)
+    if parts is None:
+        # ⚠ Unknown colour -> treat as DARK, so `_hover_of` lifts. On an
+        # unshadeable colour `_shade` returns it unchanged anyway, so the
+        # direction never reaches anything; this only has to not raise.
+        return 0.0
+    r, g, b = (c / 255.0 for c in parts)
     return 0.299 * r + 0.587 * g + 0.114 * b
 
 

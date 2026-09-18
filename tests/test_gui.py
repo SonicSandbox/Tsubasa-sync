@@ -306,6 +306,22 @@ def test_a_test_WINDOW_CANNOT_TOUCH_THE_SCREEN_SONIC_IS_USING():
     from ctypes import wintypes
     import conftest
 
+    # 🚨 SKIP, DO NOT FAIL, WHEN THE OFF SWITCH IS SET. This check asserts
+    # that the windows are NOT on Sonic's desktop — which is deliberately
+    # false when he has asked for them to be, and asserting it anyway made
+    # the documented escape hatch guarantee a red run.
+    #
+    # ⛔ THAT IS WORSE THAN IT SOUNDS. `TSUBASA_TEST_SHOW_WINDOWS=1` exists
+    # so somebody can LOOK at the real window, which is paid-for doctrine
+    # here — fifty green checks once sat over a header running off the
+    # screen. With this failing, *look at it* and *run the suite green* were
+    # mutually exclusive, and a developer who leaves the variable set learns
+    # to ignore a permanent failure. Reported by an adversarial pass; the
+    # off switch was mine, and so was this.
+    if os.environ.get(conftest.SHOW_WINDOWS):
+        pytest.skip(u"SKIPPED, NOT PASSED: %s is set, so the windows are "
+                    u"deliberately on the real desktop"
+                    % conftest.SHOW_WINDOWS)
     assert conftest.DESKTOP_MOVED == u"", \
         u"the private desktop was not entered: %s" % conftest.DESKTOP_MOVED
 
@@ -1613,6 +1629,45 @@ def test_the_hover_reads_the_CURRENT_colour_not_the_one_it_was_built_with(
             % b.cget(u"bg"))
     finally:
         root.destroy()
+
+
+def test_the_theme_helpers_NEVER_RAISE_on_an_ordinary_Tk_colour():
+    u"""🚨 `_hover_of` RAISED `ValueError` ON EVERY ORDINARY TK COLOUR, AND IT
+    RUNS INSIDE AN EVENT HANDLER. `enter` calls `_hover_of(widget.cget("bg"))`
+    and Tk returns whatever the widget holds — `#fff`, `red`, `gray50`,
+    `SystemButtonFace`. Each of those went straight out of a `<Enter>` binding
+    into `report_callback_exception`.
+
+    ⚠ Latent, not live: every palette constant is 6-digit hex today, and no
+    check fed anything else — which is exactly why an adversary found it and
+    the suite did not. One stock widget, or one `#fff` in the palette, makes it
+    live for every hover in the window.
+
+    ⭐ A PAINT PATH FAILS SOFT: an unshadeable colour comes back unchanged, so
+    that widget simply has no hover — a missing affordance rather than a
+    traceback.
+    """
+    from tsubasa.gui import app as APP
+
+    for colour in (u"red", u"white", u"gray50", u"SystemButtonFace", u"",
+                   u"#", u"#12", u"#aabbccdd", u"#12e12d12d", u"#zzzzzz",
+                   None, 0):
+        assert APP._shade(colour, 0.10) == colour, colour
+        assert APP._hover_of(colour) == colour, colour
+        APP._luma(colour)                 # must not raise
+        APP._press_of(colour)             # nor must this
+
+    # ⛔ AND `#rgb` EXPANDS BY REPETITION, NOT BY PADDING. `#fff` is white;
+    # reading it as `#0f0f0f` would be a silently WRONG colour, which is worse
+    # than an error.
+    assert APP._channels(u"#fff") == [255, 255, 255]
+    assert APP._channels(u"#abc") == [170, 187, 204]
+    assert APP._luma(u"#fff") > 0.99 and APP._luma(u"#000") < 0.01
+
+    # ⭐ AND THE REAL PALETTE IS UNCHANGED BY THE REWRITE — the whole point of
+    # hardening a parser is that it still parses what it used to.
+    assert APP._shade(u"#15171b", 0.10) == u"#2c2e32"
+    assert APP._shade(u"#6aa8d8", -0.08) == u"#629bc7"
 
 
 @pytest.mark.skipif(not sys.platform.startswith("win"),
