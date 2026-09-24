@@ -507,7 +507,10 @@ the field it filters on is **launch**, because the output name already depends o
 ⛔ **Do not store language as an opaque filename suffix.** Parse it into a real field on
 `Result`, resolved in this order:
 
-1. **Filename tags** — `.en.` `.ja.` `.jpn.` `ja-jp` `[cc]` `[sdh]` `.forced.`
+1. **Filename tags** — `.en.` `.ja.` `.jpn.` `ja-jp` `[cc]` `[sdh]` `.forced.` · the
+   English display names (`.Japanese.`, 0.1.5) · ⭐ `.jp.` — Japan's COUNTRY code where a
+   language goes, read as `ja` from 0.1.8 (2026-09-23): 271 of 17,790 real dev-slice names
+   are written that way, and nothing else moves (`sidecar._COUNTRY_AS_LANGUAGE`)
 2. **Container track metadata** — `tags.language` on the subtitle stream
 3. **Script detection from content** — CJK vs Latin vs Cyrillic vs Arabic vs Hangul.
    Cheap, and reliable for the coarse case where no tag exists

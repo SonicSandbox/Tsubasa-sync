@@ -184,6 +184,22 @@ _DISPLAY_NAMES = {
 }
 _THREE_TO_TWO.update(_DISPLAY_NAMES)
 
+#: ⭐ `jp` -- JAPAN'S COUNTRY CODE, WRITTEN WHERE A LANGUAGE GOES. Not ISO 639
+#: (Japanese is `ja` / `jpn`), and it is how thousands of real files say Japanese.
+#: Reported through hato (2026-09-23, a user whose sidecars hato fetched beside).
+#: ⭐ MEASURED BEFORE IT LANDED, over the corpus's dev slice: **271 of 17,790** real
+#: subtitle filenames end `.jp.<ext>` (248 `jp`, 22 `JP`, 1 `Jp`); every one read
+#: `und`, every one now reads `ja`, and **nothing else in the corpus moves** --
+#: no stem, no flag, no other language. hato's own corpus counts the token 18,228
+#: times.
+#: ⚠ ONLY AS A TAG, by the one position rule every token here obeys: a `.JP.`
+#: with a release token after it (`Show.JP.1080p.WEB.srt`) is still not one.
+#: ⛔ And a table of ONE on purpose: `jap` is a slur that some files carry and
+#: hato's config refuses by name; every other country-for-language confusion
+#: (`cn`, `kr`, `gr`...) waits for its own measurement.
+_COUNTRY_AS_LANGUAGE = {"jp": "ja"}
+_THREE_TO_TWO.update(_COUNTRY_AS_LANGUAGE)
+
 LANGUAGE_TOKENS = frozenset(list(ISO_639_1) + list(_THREE_TO_TWO))
 
 

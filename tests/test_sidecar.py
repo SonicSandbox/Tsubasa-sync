@@ -779,6 +779,59 @@ def test_a_display_name_MID_NAME_is_a_release_token_and_NOT_a_language():
             % (mixed, S.parse(mixed).lang))
 
 
+def test_jp_the_countrys_code_reads_as_japanese_in_every_casing_and_shape():
+    u"""⭐ `jp` is Japan's country code, not a language code -- and it is how
+    thousands of real files say Japanese (271 of 17,790 in the dev slice). A
+    consumer reading `und` for them fetched a second subtitle beside a first one
+    that was already Japanese (hato, 2026-09-23). ⭐ And the SLOT: `.jp.` and
+    `.ja.` are one language, so a dedupe run sees them as one."""
+    for form in (u"Show - 01.jp.srt", u"Show - 01.JP.ass", u"Show - 01.Jp.srt"):
+        sc = S.parse(form)
+        assert (sc.lang, sc.stem) == (u"ja", u"Show - 01"), (form, sc.lang, sc.stem)
+    assert S.parse(u"Show - 01.jp.srt").tag == u"jp"            # kept as written
+    forced = S.parse(u"Show - 01.jp.forced.srt")
+    assert forced.lang == u"ja" and forced.flags == [u"forced"], forced
+    cc = S.parse(u"Show - 01.jp[cc].srt")
+    assert cc.lang == u"ja" and cc.flags == [u"cc"], cc
+    assert S.parse(u"Show - 01.jp.srt").slot() == S.parse(u"Show - 01.ja.srt").slot()
+    for name, code in S._COUNTRY_AS_LANGUAGE.items():
+        assert code in S.ISO_639_1, (name, code)
+
+
+def test_a_JP_with_a_release_token_after_it_is_not_a_language():
+    u"""The one position rule, held for the new token too: `JP` counts only when
+    everything after it is a flag."""
+    for release in (u"Show.S01E01.JP.1080p.WEB.srt", u"Movie.2004.JP.cc.BluRay.srt",
+                    u"Show - 01.JP.x264.srt"):
+        assert S.parse(release).lang == S.UND, (release, S.parse(release).lang)
+
+
+def test_jp_moves_nothing_but_jp_on_the_real_corpus(real_names):
+    u"""⚠ MEASURED BEFORE IT LANDED: 271 of 17,790 dev-slice filenames move, every
+    one from `und` to `ja`, every one ending `.jp.<ext>` in some casing -- and
+    nothing else moves. This pins that shape over the fixture's slice, so a later
+    change to the token rules that drags anything else along goes red here."""
+    kept_tokens, kept_table = S.LANGUAGE_TOKENS, dict(S._THREE_TO_TWO)
+    try:
+        S.LANGUAGE_TOKENS = frozenset(t for t in kept_tokens if t not in S._COUNTRY_AS_LANGUAGE)
+        for token in S._COUNTRY_AS_LANGUAGE:
+            S._THREE_TO_TWO.pop(token, None)
+        before = [(S.parse(n).stem, S.parse(n).lang) for n in real_names]
+    finally:
+        S.LANGUAGE_TOKENS = kept_tokens
+        S._THREE_TO_TWO.clear()
+        S._THREE_TO_TWO.update(kept_table)
+    after = [(S.parse(n).stem, S.parse(n).lang) for n in real_names]
+    moved = [(real_names[i], before[i], after[i]) for i in range(len(real_names))
+             if before[i] != after[i]]
+    assert moved, u"no real name carries `.jp.` any more -- this check measures nothing"
+    wrong = [(n, b, a) for n, b, a in moved
+             if not (b[1] == S.UND and a[1] == u"ja"
+                     and n.rsplit(u".", 2)[-2].lower() == u"jp")]
+    assert not wrong, u"%d real names moved in a way `jp` should not move them: %r" % (
+        len(wrong), wrong[:5])
+
+
 def test_the_display_names_change_NOTHING_on_the_real_corpus(real_names):
     u"""⚠ MEASURED: 0 of 40,618 real filenames change under this fix, and the
     `und` rate is identical before and after.

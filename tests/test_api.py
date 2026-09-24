@@ -1330,13 +1330,17 @@ def test_an_unrecognised_language_RAISES_instead_of_unpairing_everything(
     """
     _touch(tmp_path, u"Show - 01.mkv", u"Show - 01.ja.srt")
     scan = tsubasa.scan(str(tmp_path))
-    for typo in (u"japanse", u"jp", u"ja_JP", u"nihongo"):
+    # ⚠ `jp` LEFT THIS LIST ON 2026-09-23, for the reason `japanese` did: the
+    # filename reader now reads `.jp.` as Japanese (271 of 17,790 real names say
+    # it that way), so an argument spelled the same must mean the same.
+    for typo in (u"japanse", u"ja_JP", u"nihongo"):
         with pytest.raises(ValueError) as exc:
             scan.unpaired(lang=typo)
         assert typo in str(exc.value), (typo, str(exc.value))
 
-    # ⭐ The English name resolves, and to the same answer as its code.
+    # ⭐ The English name and the country code resolve, to the same answer as the code.
     assert list(scan.unpaired(lang=u"Japanese")) == list(scan.unpaired(lang=u"ja"))
+    assert list(scan.unpaired(lang=u"jp")) == list(scan.unpaired(lang=u"ja"))
 
     assert [v.name for v, _ in scan.unpaired(lang=u"und")] == \
         [u"Show - 01.mkv"], u"`und` is a real request: no untagged subtitle"

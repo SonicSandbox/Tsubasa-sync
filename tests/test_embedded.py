@@ -302,15 +302,22 @@ def test_an_unrecognised_lang_RAISES_rather_than_matching_nothing(tmp_path):
 
     ⭐ The check's INTENT is untouched: the two entries that remain are
     genuine typos, and they still raise.
+
+    ⚠ AND `jp` LEFT IT ON 2026-09-23, for the same reason: the filename reader
+    reads `.jp.` as Japanese now (271 of 17,790 real names are written that
+    way), so an argument spelled the same must mean the same.
     """
     path = _mkv(tmp_path / "v.mkv", SHAPES)
     tried = 0
-    for typo in (u"jp", u"ja_JP", u"japanse", u"nihongo"):
+    for typo in (u"ja_JP", u"japanse", u"nihongo"):
         with pytest.raises(ValueError) as raised:
             tsubasa.embedded_subs(path, lang=typo)
         assert typo in (u"%s" % raised.value), raised.value
         tried += 1
-    assert tried == 4
+    assert tried == 3
+    as_code = tsubasa.embedded_subs(path, lang=u"ja")
+    as_country = tsubasa.embedded_subs(path, lang=u"jp")
+    assert [t.index for t in as_country.tracks] == [t.index for t in as_code.tracks]
 
     # ⭐ AND THE ENGLISH NAME IS ACCEPTED, resolving to the same code the
     # two- and three-letter forms do.
