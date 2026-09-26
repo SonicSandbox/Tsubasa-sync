@@ -297,6 +297,36 @@ for track in subs.tracks if subs.ok else []:
 
 → [`examples/find_missing_subtitles.py`](../examples/find_missing_subtitles.py)
 
+**Taking a subtitle track out, as a file** *(0.1.9)*:
+
+```python
+subs = tsubasa.embedded_subs("Show - 01.mkv", lang="ja")
+track = next(t for t in subs.tracks if t.text and not t.forced)
+got = tsubasa.extract_subtitle("Show - 01.mkv", track, write=True)
+if not got.ok:
+    print("could not take it out:", got.reason)
+elif got.write_failed:
+    print("taken out, but not written:", got.reason)   # a file of that name is there
+else:
+    print("written:", got.output_path, "--", got.cues, "events as", got.ext)
+```
+
+- **Check `ok`, then `write_failed`.** `ok` says whether the track came out; a write that
+  did not land (a file of that name already there, a folder that cannot be written) leaves
+  `ok` True with `write_failed` and the reason. Nothing is ever written over a file.
+- **In its own format.** `S_TEXT/UTF8` → `.srt`, `S_TEXT/ASS` → `.ass` with its header and
+  styles, `S_TEXT/SSA` → `.ssa`. Never converted: each event's text is exactly what the file
+  stores. An ASS track's fonts are attachments of the video, so they do not come along.
+- **`track` is a track `embedded_subs()` read from the SAME video, or its `index`.** A track
+  object is checked against the video's own, and refused when they differ.
+- **Without `write=True` nothing is written** — `got.data` is the file's bytes. With it, the
+  name is tsubasa's: `<video>.<lang>[.forced].<ext>`, beside the video or in `out_dir`.
+- **Matroska only, no ffmpeg.** Anything it cannot take out — an MP4 (its subtitles have no
+  file format of their own), a WebVTT or picture track, a damaged or still-downloading file
+  — is `ok=False` with the reason. It never raises for a video; only for a `track` that is
+  neither a track nor an int.
+- Don't write `if got:` — it raises, as `embedded_subs()` does. Ask `got.ok`.
+
 ### 6. What a run leaves behind
 
 | | Default | To turn it off |

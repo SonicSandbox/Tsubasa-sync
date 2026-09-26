@@ -34,7 +34,7 @@ four shapes through them -- the parser, discovery, the sidecar reader and
 #: published artifact reporting that cannot be told apart from any other
 #: build of it (`10-deployment.md`: *the live artifact's version equals the
 #: local one*).
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 
 # ⚠ The submodule imports are here rather than at the bottom, and that is safe
 # because no submodule imports a name FROM this package. Every one of them
@@ -75,6 +75,9 @@ from .selfcheck import SelfCheck, self_check                   # noqa: E402,F401
 # ⭐ 0.1.3 (RUNBOOK 3f): the embedded-track check hato's read rule opens with.
 from .embedded import (EmbeddedSubtitle, EmbeddedSubtitles,    # noqa: E402,F401
                        embedded_subs)
+# ⭐ 0.1.9 (RUNBOOK 3h): take an embedded text track out, in its own format -- for
+# hato's LAYER 14. ⛔ The name is Sonic's to veto before the tag.
+from .extract import ExtractedSubtitle, extract_subtitle        # noqa: E402,F401
 # ⭐ The sidecar reader was already one of the four frozen shapes hato pins; it
 # was reachable only as `tsubasa.sidecar.parse`, which reads like an internal.
 from .sidecar import Sidecar                                   # noqa: E402,F401
@@ -86,4 +89,6 @@ __all__ = ["align", "scan", "sync", "set_ffmpeg", "Result", "Scan",
            "self_check", "SelfCheck", "sync_to_reference", "render",
            "Rendered", "parse_subtitle_name", "Sidecar",
            # added 0.1.3 (RUNBOOK 3f) -- never renamed
-           "embedded_subs", "EmbeddedSubtitles", "EmbeddedSubtitle"]
+           "embedded_subs", "EmbeddedSubtitles", "EmbeddedSubtitle",
+           # added 0.1.9 (RUNBOOK 3h) -- never renamed
+           "extract_subtitle", "ExtractedSubtitle"]

@@ -171,6 +171,14 @@ class _Reader(object):
 
     def seek(self, pos, whence=0):
         self.nseek += 1
+        # 🚨 RUNBOOK 3h's adversarial pass: an offset READ FROM THE FILE -- a
+        # CueRelativePosition of 2**63 -- made this raise OverflowError out of the
+        # reader, where damage is a ContainerError. Past the end is the end: a read
+        # there returns nothing, exactly as a seek past EOF always did.
+        if whence == 0:
+            if pos < 0:
+                raise ContainerError(u"a negative file position (%d) was asked for" % pos)
+            pos = min(pos, self.size)
         return self.fh.seek(pos, whence)
 
 
@@ -1107,3 +1115,314 @@ def read(path, timing=True, want_types=(SUBTITLE,), use_index=True):
 
         result["bytes_read"], result["seeks"] = r.nread, r.nseek
         return result
+
+
+# --------------------------------------------------------------------------
+# extraction -- a text track's PAYLOADS (RUNBOOK 3h, for hato's LAYER 14)
+# --------------------------------------------------------------------------
+#
+# ⭐ Everything above reads a subtitle's TIMING and never its text. Taking a track
+# OUT as a file needs the text too: each block's payload, the track's CodecPrivate
+# (an ASS/SSA track's header and styles) and its ContentEncodings (mkvmerge can
+# compress a subtitle track). ⛔ The timing path above is not touched by any of it:
+# nothing here runs unless a track is being extracted.
+
+CODEC_PRIVATE = 0x63A2
+CONTENT_ENCODINGS = 0x6D80
+CONTENT_ENCODING = 0x6240
+CONTENT_ENCODING_ORDER = 0x5031
+CONTENT_ENCODING_SCOPE = 0x5032
+CONTENT_ENCODING_TYPE = 0x5033
+CONTENT_COMPRESSION = 0x5034
+CONTENT_COMP_ALGO = 0x4254
+CONTENT_COMP_SETTINGS = 0x4255
+CONTENT_ENCRYPTION = 0x5035
+DEFAULT_DURATION = 0x23E383            # ns per frame -- a block with no duration takes it
+
+#: ⛔ Bounds for what extraction reads. Each guards a damaged or hostile file, and
+#: each is a REFUSAL naming what it found rather than a huge read.
+MAX_CODEC_PRIVATE = 8 * 1024 * 1024      # an ASS header past this is damage
+MAX_PAYLOAD = 1024 * 1024                # one subtitle event past this is damage
+MAX_EXTRACT_BLOCKS = 2000000             # blocks walked for one track
+
+
+def _read_encodings(r, el):
+    u"""The ContentEncodings of a TrackEntry. -> [dict], EBML defaults filled.
+
+    ⚠ Defaults matter here: an absent ContentEncodingScope is 1 (the frames),
+    an absent ContentEncodingType is 0 (compression), and an absent
+    ContentCompAlgo is 0 (zlib) -- a ContentCompression element carrying
+    nothing at all is zlib."""
+    out = []
+    for e in _children(r, el.body, el.end):
+        if e.size is None:
+            raise ContainerError(u"a content encoding declares an unknown size")
+        if e.id != CONTENT_ENCODING:
+            continue
+        # ⚠ "algo" 0 even with NO ContentCompression element (the 3h pass: it read
+        # "algorithm None") -- EBML's default, and ffmpeg's reading of the same file
+        enc = {"order": 0, "scope": 1, "type": 0, "algo": 0, "settings": b"",
+               "encrypted": False}
+        for f in _children(r, e.body, e.end):
+            if f.size is None:
+                raise ContainerError(u"a content encoding field declares an unknown size")
+            r.seek(f.body)
+            if f.id == CONTENT_ENCODING_ORDER:
+                enc["order"] = read_uint(r, f.size)
+            elif f.id == CONTENT_ENCODING_SCOPE:
+                enc["scope"] = read_uint(r, f.size) if f.size else 1
+            elif f.id == CONTENT_ENCODING_TYPE:
+                enc["type"] = read_uint(r, f.size)
+            elif f.id == CONTENT_COMPRESSION:
+                enc["algo"] = 0
+                for g in _children(r, f.body, f.end):
+                    if g.size is None:
+                        raise ContainerError(u"a compression field declares an unknown size")
+                    r.seek(g.body)
+                    if g.id == CONTENT_COMP_ALGO:
+                        enc["algo"] = read_uint(r, g.size)
+                    elif g.id == CONTENT_COMP_SETTINGS:
+                        enc["settings"] = r.read(g.size)
+            elif f.id == CONTENT_ENCRYPTION:
+                enc["encrypted"] = True
+        out.append(enc)
+    return out
+
+
+def _read_track_extras(r, el, number):
+    u"""CodecPrivate, ContentEncodings and DefaultDuration of the TrackEntry
+    numbered `number`. -> {"codec_private": bytes or None, "encodings": [dict],
+    "default_duration": ns or None}, or None when no entry has that number."""
+    for c in _children(r, el.body, el.end):
+        if c.size is None:
+            raise _damaged_tracks(u"damaged", c.start,
+                                  u"an element inside it declares an unknown size")
+        if c.id != TRACK_ENTRY:
+            continue
+        num, private, encodings, default_duration = None, None, [], None
+        for f in _children(r, c.body, c.end):
+            if f.size is None:
+                raise _damaged_tracks(u"damaged", f.start,
+                                      u"a field declares an unknown size")
+            if f.id == TRACK_NUMBER:
+                r.seek(f.body)
+                num = read_uint(r, f.size)
+            elif f.id == CODEC_PRIVATE:
+                if f.size > MAX_CODEC_PRIVATE:
+                    raise ContainerError(
+                        u"a track's CodecPrivate declares %d bytes -- past %d, which is "
+                        u"damage, not a subtitle header" % (f.size, MAX_CODEC_PRIVATE))
+                r.seek(f.body)
+                private = r.read(f.size)
+                if len(private) != f.size:
+                    raise ContainerError(u"a track's CodecPrivate is cut off")
+            elif f.id == CONTENT_ENCODINGS:
+                encodings = _read_encodings(r, f)
+            elif f.id == DEFAULT_DURATION:
+                r.seek(f.body)
+                default_duration = read_uint(r, f.size)
+        if num == number:
+            return {"codec_private": private, "encodings": encodings,
+                    "default_duration": default_duration}
+    return None
+
+
+def _block_with_payload(r, eid, size, body):
+    u"""A SimpleBlock or BlockGroup's track, timecode, duration and PAYLOAD.
+    -> (track, tc, duration or None, payload bytes, laced) or None
+
+    ⚠ `laced` is the flags byte's lacing bits. A laced subtitle block holds
+    several frames under one header; subtitle tracks are unlaced in practice,
+    and extraction refuses rather than guess the frame boundaries."""
+    if eid == SIMPLE_BLOCK:
+        block_body, block_end, duration = body, body + size, None
+    elif eid == BLOCK_GROUP:
+        block_body = block_end = duration = None
+        for g in _children(r, body, body + size):
+            if g.size is None:
+                raise ContainerError(u"a subtitle block group at byte %d is damaged" % body)
+            if g.id == BLOCK:
+                block_body, block_end = g.body, g.end
+            elif g.id == BLOCK_DURATION:
+                r.seek(g.body)
+                duration = read_uint(r, g.size)
+        if block_body is None:
+            raise ContainerError(u"a subtitle block group at byte %d holds no block" % body)
+    else:
+        return None
+    track, tc, payload_at = _block_header(r, block_body)
+    if track is None:
+        raise ContainerError(u"a subtitle block at byte %d is damaged" % block_body)
+    r.seek(payload_at - 1)
+    flags = r.read(1)
+    laced = bool(flags and (flags[0] & 0x06))
+    length = block_end - payload_at
+    if length < 0 or length > MAX_PAYLOAD:
+        raise ContainerError(
+            u"a subtitle block at byte %d declares a %d-byte payload -- damage, not "
+            u"a subtitle event" % (block_body, length))
+    r.seek(payload_at)
+    payload = r.read(length)
+    if len(payload) != length:
+        raise ContainerError(u"a subtitle block at byte %d is cut off" % block_body)
+    return track, tc, duration, payload, laced
+
+
+def _block_track(r, eid, size, body):
+    u"""The track number of a SimpleBlock or BlockGroup, from its header alone.
+    ⚠ A BlockGroup's track sits inside its Block child, not at the group's own
+    body -- and a payload is never read to learn it: a video block is megabytes."""
+    if eid == SIMPLE_BLOCK:
+        r.seek(body)
+        return read_vint(r)[0]
+    if eid == BLOCK_GROUP:
+        for g in _children(r, body, body + size):
+            if g.size is None:
+                return None
+            if g.id == BLOCK:
+                r.seek(g.body)
+                return read_vint(r)[0]
+    return None
+
+
+def _unreadable_at(pos):
+    return ContainerError(
+        u"the file cannot be read past byte %d -- a stretch of it is empty or damaged "
+        u"(a download still in progress?), so its subtitle track is not all there" % pos)
+
+
+def _payloads_walk(r, seg_start, seg_end, number, first_cluster):
+    u"""Every block of track `number`, payload included, by walking every
+    cluster -- the ground truth. -> [(ticks, duration, payload, laced)]
+
+    🚨 RUNBOOK 3h's adversarial pass: this stopped QUIETLY wherever the bytes
+    stopped making sense, and a file with a zero-filled stretch (a torrent still
+    downloading into a sparse file: right size, holes in it) or a live recording
+    cut off came back as a WHOLE subtitle with lines missing -- 3 of 24, 12 of 24,
+    20 of 24, `ok=True`. ⛔ Anything unreadable before the Segment's end, and any
+    element that runs past the file, now RAISES: not all there is refused.
+    """
+    out = []
+    walked = 0
+    size_of_file = r.size
+    pos = seg_start if first_cluster is None else first_cluster
+    while pos < seg_end:
+        r.seek(pos)
+        eid, id_len = read_vint(r, keep_marker=True)
+        if eid is None:
+            raise _unreadable_at(pos)
+        size, size_len = read_vint(r)
+        if size is None:
+            raise _unreadable_at(pos)
+        body = pos + id_len + size_len
+        unknown = size == UNKNOWN_SIZE.get(size_len)
+        if not unknown and body + size > size_of_file:
+            raise ContainerError(u"the file is cut off: an element at byte %d runs past "
+                                 u"its end" % pos)
+        end = seg_end if unknown else min(body + size, seg_end)
+        if eid != CLUSTER:
+            if unknown:
+                break
+            nxt = body + size
+            if nxt <= pos:
+                raise _unreadable_at(pos)
+            pos = nxt
+            continue
+        cl_ts = 0
+        cursor = body
+        while cursor < end:
+            r.seek(cursor)
+            cid, cid_len = read_vint(r, keep_marker=True)
+            if cid is None:
+                raise _unreadable_at(cursor)
+            csize, csize_len = read_vint(r)
+            if csize is None:
+                raise _unreadable_at(cursor)
+            if cid == CLUSTER and unknown:
+                break                     # a live muxer's next cluster: the walk goes on
+            if cid == CLUSTER or csize == UNKNOWN_SIZE.get(csize_len):
+                raise _unreadable_at(cursor)
+            cbody = cursor + cid_len + csize_len
+            if cbody + csize > end:
+                raise ContainerError(u"the file is cut off: a block at byte %d runs past "
+                                     u"its cluster" % cursor)
+            walked += 1
+            if walked > MAX_EXTRACT_BLOCKS:
+                raise ContainerError(
+                    u"more than %d elements walked for one subtitle track" % MAX_EXTRACT_BLOCKS)
+            if cid == CLUSTER_TIMESTAMP:
+                r.seek(cbody)
+                cl_ts = read_uint(r, csize)
+            elif cid in (SIMPLE_BLOCK, BLOCK_GROUP):
+                if _block_track(r, cid, csize, cbody) == number:
+                    got = _block_with_payload(r, cid, csize, cbody)
+                    if got is not None:
+                        _track, tc, duration, payload, laced = got
+                        out.append((cl_ts + tc, duration, payload, laced))
+            nxt = cbody + csize
+            if nxt <= cursor:
+                break
+            cursor = nxt
+        if unknown:
+            end = cursor
+        if end <= pos:
+            break
+        pos = end
+    return out
+
+
+def read_payloads(path, number):
+    u"""Everything extraction needs of subtitle track `number` (its Matroska
+    TrackNumber). -> {"timescale", "codec_private", "encodings",
+    "default_duration", "blocks": [(ticks, duration_ticks or None, payload bytes,
+    laced)], "source"}
+
+    ⛔ STRICTER THAN THE TIMING READ, BECAUSE A FILE IS WRITTEN FROM IT.
+    🚨 IT WALKS EVERY CLUSTER AND NEVER TRUSTS THE CUES INDEX (RUNBOOK 3h's
+    adversarial pass): the index's completeness check samples one cluster and
+    its neighbour, and an index covering only the first clusters, one with a
+    duplicated entry and one with a distant cluster thinned all passed it --
+    a subtitle with lines missing, `ok=True`. Extraction is one read per video;
+    the timing read keeps the index for speed, where a missing cue costs a
+    little evidence, not a line of the file. A file that ends before its own
+    Segment does, or cannot be read to its end, is refused. Raises
+    ContainerError."""
+    size = os.path.getsize(path)
+    with open(str(path), "rb") as raw:
+        r = _Reader(raw, size)
+        head = r.read(4)
+        if not looks_like_matroska(head):
+            raise ContainerError(u"not Matroska: no EBML magic at offset 0")
+        seg, incomplete = _find_segment(r, size)
+        if incomplete:
+            raise ContainerError(incomplete)
+        seg_start, seg_end = seg.body, min(seg.end, size)
+        info = {"timescale": 1000000, "duration_raw": None}
+        seek_targets = {}
+        tracks_el = first_cluster = None
+        for c in _children(r, seg_start, seg_end):
+            if c.id == CLUSTER:
+                first_cluster = c.start
+                break
+            if c.size is None:
+                break
+            if c.id == INFO:
+                _read_info(r, c, info)
+            elif c.id == TRACKS:
+                tracks_el = c
+            elif c.id == SEEK_HEAD:
+                _read_seek_head(r, c, seg_start, seek_targets)
+        if tracks_el is None and TRACKS in seek_targets:
+            tracks_el = _open_element(r, seek_targets[TRACKS], TRACKS, seg_end)
+        if tracks_el is None:
+            raise ContainerError(u"no track list was found in this Matroska file")
+        _read_tracks(r, tracks_el)            # the same wholeness checks as a read
+        extras = _read_track_extras(r, tracks_el, number)
+        if extras is None:
+            raise ContainerError(u"no track numbered %d in this file" % number)
+        blocks = _payloads_walk(r, seg_start, seg_end, number, first_cluster)
+        return {"timescale": info["timescale"] or 1000000,
+                "codec_private": extras["codec_private"],
+                "encodings": extras["encodings"],
+                "default_duration": extras["default_duration"],
+                "blocks": blocks, "source": "blocks"}

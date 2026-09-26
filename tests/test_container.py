@@ -150,13 +150,14 @@ def _s(text):
     return text.encode("utf-8")
 
 
-def _block(track, rel_tc, payload=b"\x2a\x2a"):
+def _block(track, rel_tc, payload=b"\x2a\x2a", flags=0):
     """track vint + int16 relative timecode + flags byte + payload."""
-    return _vint(track) + struct.pack(">h", rel_tc) + b"\x00" + payload
+    return _vint(track) + struct.pack(">h", rel_tc) + bytes([flags]) + payload
 
 
 def _track_entry(number, ttype, codec, language=u"und", name=u"",
-                 default=True, forced=False, bcp47=None):
+                 default=True, forced=False, bcp47=None, codec_private=None,
+                 encodings=None, default_duration=None):
     body = (_el(E_TRACKNUM, _u(number))
             + _el(E_TRACKTYPE, _u(ttype))
             + _el(E_CODECID, _s(codec))
@@ -168,6 +169,14 @@ def _track_entry(number, ttype, codec, language=u"und", name=u"",
         body += _el(E_TRACKNAME, _s(name))
     if bcp47:
         body += _el(E_LANG_BCP47, _s(bcp47))
+    # ⭐ RUNBOOK 3h -- what extraction needs: the ASS header, and how the track's
+    # frames are compressed (`encodings` is a ContentEncodings element's BODY)
+    if codec_private is not None:
+        body += _el(0x63A2, codec_private)
+    if encodings is not None:
+        body += _el(0x6D80, encodings)
+    if default_duration is not None:              # ns -- 3h: a block with none takes it
+        body += _el(0x23E383, _u(default_duration))
     return _el(E_TRACKENTRY, body)
 
 
@@ -177,7 +186,8 @@ def _write_mkv(path, cues, *, timescale=1000000, duration_s=None,
                block_style="group", per_cluster=6, noise_blocks=2,
                cue_style="full", cues_at="end", with_seekhead=True,
                unknown_segment=False, unknown_cluster=False, chapters=(),
-               leading_void=False):
+               leading_void=False, payloads=None, codec_private=None,
+               encodings=None, laced=False, default_duration=None, forced=False):
     """Write a Matroska file whose subtitle timing is exactly `cues`.
 
     `cues` is [(start_seconds, duration_seconds or None)].
@@ -189,6 +199,14 @@ def _write_mkv(path, cues, *, timescale=1000000, duration_s=None,
       cues_at        end (found through the SeekHead) | front (found by scan)
       block_style    group (BlockGroup + BlockDuration) | simple (SimpleBlock)
       unknown_*      the size-unknown forms a live muxer writes
+
+    ⭐ RUNBOOK 3h (extraction): `payloads` is one bytes per cue (the block's
+    payload, as stored -- compressed or stripped when `encodings` says so);
+    `codec_private` and `encodings` go on the subtitle track; `laced` sets the
+    lacing bits of every subtitle block's flags byte -- True is Xiph (0x02), or
+    give the bits (0x04 fixed, 0x06 EBML); `default_duration` (ns) goes on the
+    subtitle track. cue_style `head` indexes the first cluster only, `hostile`
+    gives every entry a CueRelativePosition of 2**63.
     """
     ticks = [int(round(s * 1e9 / timescale)) for s, _d in cues]
     durs = [None if d is None else int(round(d * 1e9 / timescale))
@@ -214,10 +232,12 @@ def _write_mkv(path, cues, *, timescale=1000000, duration_s=None,
                     "per_cluster (currently %d) so a cluster spans less time."
                     % (rel, per_cluster))
             offset = len(body)
+            payload = b"\x2a\x2a" if payloads is None else payloads[j]
+            flags = (0x02 if laced is True else int(laced)) if laced else 0
             if block_style == "simple":
-                body += _el(E_SIMPLEBLOCK, _block(sub_track, rel))
+                body += _el(E_SIMPLEBLOCK, _block(sub_track, rel, payload, flags))
             else:
-                inner = _el(E_BLOCK, _block(sub_track, rel))
+                inner = _el(E_BLOCK, _block(sub_track, rel, payload, flags))
                 if durs[j] is not None:
                     inner += _el(E_BLOCKDURATION, _u(durs[j]))
                 body += _el(E_BLOCKGROUP, inner)
@@ -244,7 +264,9 @@ def _write_mkv(path, cues, *, timescale=1000000, duration_s=None,
     entries = (_track_entry(1, VIDEO, u"V_MPEG4/ISO/AVC")
                + _track_entry(2, AUDIO, u"A_AAC", u"jpn")
                + _track_entry(sub_track, SUB, codec, language, track_name,
-                              bcp47=bcp47))
+                              bcp47=bcp47, codec_private=codec_private,
+                              encodings=encodings,
+                              default_duration=default_duration, forced=forced))
     if second_sub is not None:
         entries += _track_entry(second_sub_track(), SUB, u"S_TEXT/UTF8",
                                 u"eng", u"English", default=False)
@@ -278,6 +300,10 @@ def _write_mkv(path, cues, *, timescale=1000000, duration_s=None,
             # indexed is indexed completely, so counting inside one cluster
             # cannot see this -- only walking into the neighbour can.
             return [i for i, (cl, _off) in enumerate(placed) if cl % 2 == 0]
+        if cue_style == "head":
+            # 3h's pass: an index covering only the first cluster -- it passed the
+            # completeness check, which samples the busiest cluster and its neighbour
+            return [i for i, (cl, _off) in enumerate(placed) if cl == 0]
         return list(range(len(placed)))
 
     def build_cues(cluster_positions):
@@ -291,7 +317,8 @@ def _write_mkv(path, cues, *, timescale=1000000, duration_s=None,
                                  else pos, width=8)))
             if cue_style != "notime":
                 trackpos += _el(E_CUERELPOS,
-                                _u(7 if cue_style == "broken" else off,
+                                _u(7 if cue_style == "broken"
+                                   else 2 ** 63 if cue_style == "hostile" else off,
                                    width=8))
             points += _el(E_CUEPOINT,
                           _el(E_CUETIME, _u(ticks[idx], width=8))
