@@ -371,30 +371,36 @@ def test_a_round_trip_returns_the_same_slot():
         assert back.flags == list(flags), name
 
 
-# --- NAME_MAX, in BYTES ----------------------------------------------------
+# --- NAME_MAX, in the FILESYSTEM'S OWN UNITS -------------------------------
 
-def test_the_length_limit_is_measured_in_BYTES_not_characters():
-    u"""🚨 `06-edge-cases.md` §3: 255 bytes, and CJK hits it at ~85
-    characters. Counting characters overstates the budget threefold and the
-    rename then fails at the filesystem, which is the silent failure."""
-    stem = u"片" * 100                                   # 300 bytes of stem
+def test_the_length_limit_is_measured_in_the_filesystems_own_units():
+    u"""🚨 `06-edge-cases.md` §3: 255 BYTES on ext4 and APFS, where CJK hits it at
+    ~85 characters -- counting characters there overstates the budget threefold,
+    and the rename then fails at the filesystem. ⭐ And 255 UTF-16 UNITS on
+    Windows (hato's 15z, A1): counted in bytes there, a 100-kanji name NTFS holds
+    whole was CUT -- a stem no longer the video's, which no player loads."""
+    stem = u"片" * 100                        # 300 bytes, 100 UTF-16 units
     name, notes = S.output_name(stem, u"ja", u"ass")
-    assert len(name.encode("utf-8")) <= S.NAME_MAX
-    assert notes, "the name was trimmed and nothing said so"
-    assert len(name) < len(stem), "nothing was actually trimmed"
+    assert S._units(name) <= S.NAME_MAX
+    if os.name == "nt":
+        assert (name, notes) == (stem + u".ja.ass", []), (name, notes)
+    else:
+        assert notes and len(name) < len(stem), "300 bytes were not trimmed"
+    assert S._units(u"片") == (1 if os.name == "nt" else 3), u"the unit is wrong here"
 
 
 def test_a_trim_is_REPORTED_and_says_what_it_costs():
     u"""⛔ Never let a rename change the name silently. A trimmed stem no
     longer matches the video's basename, which is the entire mechanism."""
-    _name, notes = S.output_name(u"片" * 100, u"ja", u"ass")
+    _name, notes = S.output_name(u"片" * 300, u"ja", u"ass")
     assert any("trimmed" in n for n in notes), notes
     assert any("auto-load" in n for n in notes), (
         "the note must say what the trim costs, not just that it happened")
+    assert any(S.UNIT in n for n in notes), (notes, u"the note must say the unit")
 
 
 def test_a_trim_never_splits_a_multibyte_character():
-    name, _ = S.output_name(u"片" * 100, u"ja", u"ass")
+    name, _ = S.output_name(u"片" * 300, u"ja", u"ass")
     name.encode("utf-8").decode("utf-8")              # would raise if split
     assert u"�" not in name
 
@@ -414,9 +420,12 @@ def test_a_short_name_is_untouched_and_reports_nothing():
 # --- Windows ---------------------------------------------------------------
 
 @pytest.mark.parametrize("stem", [u"CON", u"con", u"NUL", u"COM1", u"lpt9",
-                                  u"PRN", u"AUX"])
+                                  u"PRN", u"AUX", u"CONIN$", u"conout$",
+                                  u"COM¹", u"lpt³"])
 def test_a_reserved_device_name_is_suffixed_and_reported(stem):
-    u"""🚨 These cannot exist on Windows, extension or not."""
+    u"""🚨 These cannot exist on Windows, extension or not. ⭐ hato's 15z (A10):
+    nor the console's `CONIN$` / `CONOUT$`, nor the ports by their SUPERSCRIPT
+    digits -- `CONOUT$.x.ja.srt` "succeeded" with no file on disk."""
     name, notes = S.output_name(stem, u"ja", u"srt")
     assert not S.is_reserved(name.split(u".")[0]), name
     assert notes, "a reserved name was changed silently"
@@ -466,14 +475,33 @@ def test_a_FULL_WIDTH_device_name_is_NOT_reserved():
     assert notes == []
 
 
-def test_a_stem_ending_in_a_dot_or_space_is_REPORTED():
-    u"""⚠ Windows silently strips them, so the file cannot be found again.
-    `has_trailing_junk` existed and **nothing called it** — a predicate with a
-    test and no caller, found by grepping for its callers."""
-    for stem in (u"Show ", u"Show."):
+def test_a_NAME_ending_in_a_dot_or_space_is_reported_and_a_stem_is_not():
+    u"""⚠ Windows strips a trailing dot or space from a NAME, so such a file cannot be
+    found again -- `has_trailing_junk` existed and **nothing called it**.
+    ⭐ hato's 15z (A7), MEASURED: asked of the STEM, it said *"may not be found
+    again"* over `Kimi no Na wa..mkv`'s subtitle -- written and found, the dot in
+    the middle of `Kimi no Na wa..ja.srt` only a dot. Only a name that ENDS in one
+    (no extension) is said."""
+    for stem in (u"Show ", u"Show.", u"Kimi no Na wa."):
         _name, notes = S.output_name(stem, u"ja", u"srt")
-        assert any("silently strips" in n for n in notes), (stem, notes)
+        assert not any("silently strips" in n for n in notes), (stem, notes)
+    _name, notes = S.output_name(u"Show", u"ja", u"")
+    assert any("silently strips" in n for n in notes), notes
     assert S.output_name(u"Show", u"ja", u"srt")[1] == []
+
+
+@pytest.mark.parametrize("stem", [u"Let.It.Be", u"Here.I.Am", u"Film.en"])
+def test_a_hindi_name_reads_back_as_hindi_on_its_own_stem(stem):
+    u"""🚨 hato's 15z (A4) -- `hi` is Hindi AND the hearing-impaired flag: a Hindi
+    subtitle for `Let.It.Be.mkv`, written `Let.It.Be.hi.srt`, read back as BELARUSIAN,
+    hearing-impaired, stem `Let.It` -- paired with no video. ⭐ A name that would not
+    read back as what it says is written with the three-letter code, and said."""
+    name, notes = S.output_name(stem, u"hi", u"srt")
+    back = S.parse(name)
+    assert (back.lang, back.stem) == (u"hi", stem), (name, back.lang, back.stem)
+    assert name == stem + u".hin.srt" and notes, (name, notes)
+    plain, quiet = S.output_name(u"Show", u"hi", u"srt")
+    assert (plain, quiet) == (u"Show.hi.srt", []), u"the control: a name that reads back"
 
 
 def test_an_ordinary_name_that_merely_CONTAINS_a_device_name_is_untouched():

@@ -478,23 +478,61 @@ def _fold(text):
 # writing the next one
 # ---------------------------------------------------------------------------
 
-#: 🚨 255 BYTES, not characters. `06-edge-cases.md` §3: CJK hits it at ~85
-#: characters, and a rename that fails silently is the failure mode.
+#: 🚨 255 OF THE FILESYSTEM'S OWN UNITS (`_units`): BYTES on ext4 and APFS, where
+#: CJK hits it at ~85 characters (`06-edge-cases.md` §3), and UTF-16 UNITS on Windows
+#: -- NTFS, exFAT and FAT all count those. ⚠ hato's 15z (A1): measured in bytes on
+#: Windows, a 91-kanji video's subtitle was cut to 82 characters -- a stem no longer the
+#: video's, which no player loads -- and two episodes differing after character 82
+#: were written to ONE name. The untrimmed name was a legal NTFS name all along.
 NAME_MAX = 255
 
 #: Windows refuses these as a whole stem, case-insensitively, with or without
-#: an extension. `06-edge-cases.md` §3.
+#: an extension. `06-edge-cases.md` §3. ⭐ hato's 15z (A10): and the console's two
+#: (`CONIN$`, `CONOUT$`), and the ports Windows also opens by their SUPERSCRIPT digits
+#: -- each opens a DEVICE and leaves no file.
 _RESERVED = frozenset(
-    ["con", "prn", "aux", "nul"]
+    ["con", "prn", "aux", "nul", "conin$", "conout$"]
     + ["com%d" % i for i in range(1, 10)]
-    + ["lpt%d" % i for i in range(1, 10)])
+    + ["lpt%d" % i for i in range(1, 10)]
+    + ["com" + d for d in u"¹²³"]
+    + ["lpt" + d for d in u"¹²³"])
 
 
 class NameTooLong(ValueError):
     u"""A name could not be trimmed to fit and stay unique."""
 
 
-def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX):
+def check_code(code, lang):
+    u"""Why `code` cannot be written for a subtitle in `lang`. -> a sentence, or None
+    when it can.
+
+    ⭐ 0.1.10 (RUNBOOK 3i). hato marks a subtitle nobody timed `<video>.jpn.<ext>` (its
+    RUNBOOK LAYER 15), so a caller may name the CODE a file is written with. ⛔ Only a
+    plain code this reader knows, and only one that RESOLVES to `lang`: a name that says
+    one language and means another would be read back wrong by this module, by every
+    player, and by the caller's next run. ⚠ Never a hyphenated locale (`ja-JP`): read,
+    and never written (`05-interface.md`).
+    """
+    text = u"%s" % (code,)
+    lang = _canonical(lang or UND)
+    if lang == UND:
+        return (u"a subtitle whose language is not known cannot be written with the "
+                u"code %r" % text)
+    # ⚠ PLAIN ASCII LETTERS FIRST: `str.lower()` folds a few non-ASCII letters into
+    # ASCII ones (the Kelvin sign is a `k`), and a name is no place for a lookalike.
+    if not (text.isascii() and text.isalpha()):
+        return (u"%r is not a language code tsubasa writes -- plain letters, such as "
+                u"'jpn'" % text)
+    means = _canonical(text) if text.lower() in LANGUAGE_TOKENS else None
+    if means != lang:
+        if means is None:
+            return u"%r is not a language code tsubasa reads -- give one such as 'jpn'" % text
+        return (u"the code %r means %s and the subtitle is %s -- a name that says one "
+                u"language and means another is never written" % (text, means, lang))
+    return None
+
+
+def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX, code=None):
     u"""`<video-basename>[.<tag>].<lang>[.forced][.sdh].<ext>`. -> (name, notes)
 
     ⭐ THE POINT OF THE RULE, from `05-interface.md`: *media players auto-load
@@ -504,6 +542,11 @@ def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX):
     `tag`
         `--keep-all`'s distinguishing token, when several candidates are all
         being written.
+
+    `code`
+        ⭐ 0.1.10 (RUNBOOK 3i) -- the language CODE written, as given, in place
+        of the canonical one: `jpn` writes `.jpn.`, where `lang` alone writes
+        `.ja.`. ⛔ `ValueError` unless it resolves to `lang` (`check_code`).
 
     🚨 SPEC AMENDED HERE, 2026-09-09 -- `05-interface.md` says `--keep-all`
     writes `<video>.<lang>.<tag>.<ext>`, with the tag AFTER the language. Built
@@ -519,8 +562,40 @@ def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX):
     suffix. ⛔ **Never let a rename change the name silently** -- the whole
     class of bug here is a file that quietly is not where the player looks.
     """
-    notes = []
     lang = _canonical(lang or UND)
+    if code is not None:
+        refused = check_code(code, lang)
+        if refused:
+            raise ValueError(refused)
+    name, notes, stem = _compose(video_stem, lang, ext, flags, tag, name_max,
+                                 lang if code is None else u"%s" % code)
+    # ⭐ hato's 15z (A4) -- THE NAME MUST READ BACK AS WHAT IT SAYS. `hi` is Hindi AND
+    # the hearing-impaired flag: a Hindi subtitle for `Let.It.Be.mkv` written
+    # `Let.It.Be.hi.srt` read back as BELARUSIAN, hearing-impaired, stem `Let.It` -- a
+    # file paired with no video. The three-letter code (`hin`) cannot be a flag.
+    if lang != UND:
+        back = parse(name)
+        if (back.lang, back.stem) != (lang, stem):
+            three = _TWO_TO_THREE.get(lang) if code is None else None
+            if three:
+                other, more, other_stem = _compose(video_stem, lang, ext, flags, tag,
+                                                   name_max, three)
+                again = parse(other)
+                if (again.lang, again.stem) == (lang, other_stem):
+                    notes = more + [u"%r would read back as another language or stem, so "
+                                    u"the three-letter code %r was written" % (name, three)]
+                    name = other
+                    back = None
+            if back is not None:
+                notes.append(u"%r reads back as language %r with the stem %r -- a reader "
+                             u"may not pair it with the video" % (name, back.lang, back.stem))
+    return name, notes
+
+
+def _compose(video_stem, lang, ext, flags, tag, name_max, written):
+    u"""`output_name`'s name for one written language code. -> (name, notes, the stem it
+    carries)"""
+    notes = []
     suffix = u"".join(u"." + f for f in _ordered([f.lower() for f in flags]))
     # 🚨 AN UNKNOWN LANGUAGE WRITES NO TAG AT ALL, and this was found by the
     # dry run rather than by any check -- probe 3a/2, 2026-09-09.
@@ -536,7 +611,7 @@ def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX):
     # answer -- an untagged file *"is treated as NOT the target language ...
     # never overwrite it; the new file gets the `.ja` suffix and both
     # coexist"* -- which only works if the untagged one keeps its plain name.
-    lang_part = u"" if lang == UND else u"." + lang
+    lang_part = u"" if lang == UND else u"." + written
     tail = u"%s%s.%s" % (lang_part, suffix, ext.lstrip("."))
 
     stem = video_stem
@@ -557,18 +632,18 @@ def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX):
             stem = u"%s.%s" % (stem, clean)
 
     name = stem + tail
-    if _bytes(name) > name_max:
-        keep = _trim_to(stem, name_max - _bytes(tail))
+    if _units(name) > name_max:
+        keep = _trim_to(stem, name_max - _units(tail))
         if not keep:
             raise NameTooLong(
                 "%r leaves no room for a name: the language and extension "
-                "alone are %d bytes of the %d-byte limit"
-                % (tail, _bytes(tail), name_max))
+                "alone are %d %s of the %d-%s limit"
+                % (tail, _units(tail), UNIT, name_max, UNIT[:-1]))
         notes.append(
-            u"the name was %d bytes and the limit is %d, so the stem was "
+            u"the name was %d %s and the limit is %d, so the stem was "
             u"trimmed from %d characters to %d -- the subtitle will still "
             u"auto-load only if the video's own name is trimmed the same way"
-            % (_bytes(name), name_max, len(stem), len(keep)))
+            % (_units(name), UNIT, name_max, len(stem), len(keep)))
         # 🚨 RE-CHECK AFTER THE TRIM. `CONsomethinglong` is not reserved; cut
         # to fit it becomes `CON`, which is. The guard ran before the trim and
         # the trim then re-created exactly what it had just prevented.
@@ -576,19 +651,17 @@ def output_name(video_stem, lang, ext, flags=(), tag=None, name_max=NAME_MAX):
             keep = _disarm(keep)
             notes.append(u"trimming left %r, which is a reserved device name; "
                          u"wrote %r instead" % (keep[:-1], keep))
-        name = keep + tail
-    # ⚠ Windows silently strips a trailing dot or space, so a name carrying one
-    # is a name that cannot be found again. `has_trailing_junk` existed and
-    # NOTHING CALLED IT -- a predicate with a test and no caller, which an
-    # adversarial pass found by grepping for its callers.
-    # ⚠ Checked on the STEM. By the time the tail is appended the trailing
-    # character is mid-name and harmless-looking, which is how the first
-    # attempt at this wiring managed to report nothing.
-    if has_trailing_junk(stem):
-        notes.append(u"the stem ends in a dot or a space, which Windows "
+        name, stem = keep + tail, keep
+    # ⚠ Windows strips a trailing dot or space from a NAME, so a name ending in one
+    # is a name that cannot be found again. ⭐ hato's 15z (A7) -- asked of the NAME,
+    # never the stem: `Kimi no Na wa..mkv`'s subtitle `Kimi no Na wa..jpn.srt` was
+    # measured written AND found -- a dot in the middle is only a dot. This said
+    # *"may not be found again"* over every such file.
+    if has_trailing_junk(name):
+        notes.append(u"the name ends in a dot or a space, which Windows "
                      u"silently strips -- the file may not be found again "
                      u"under this name")
-    return name, notes
+    return name, notes, stem
 
 
 def _disarm(stem):
@@ -604,20 +677,30 @@ def _disarm(stem):
     return head + u"_" + dot + rest
 
 
-def _bytes(text):
-    u"""⚠ NAME_MAX is a BYTE limit and this project's names are CJK. Measuring
-    it in characters overstates the budget by a factor of three."""
+#: What `NAME_MAX` counts, said in a trim's note.
+UNIT = u"UTF-16 units" if os.name == "nt" else u"bytes"
+
+
+def _units(text):
+    u"""A name's length in the units its filesystem's 255 counts. -> int
+
+    ⚠ BYTES on ext4 and APFS, where this project's CJK names are three to a character:
+    measured in characters the budget would be overstated threefold. ⭐ UTF-16 UNITS on
+    Windows (hato's 15z, A1): NTFS, exFAT and FAT count those, so measured in bytes a
+    Japanese name there was cut to a third of what the filesystem allows."""
+    if os.name == "nt":
+        return len(text.encode("utf-16-le")) // 2
     return len(text.encode("utf-8"))
 
 
 def _trim_to(text, budget):
-    u"""The longest prefix of `text` fitting `budget` bytes, cut on a character
-    boundary. ⚠ Truncating the encoded bytes would split a multi-byte
-    character and produce a name that is not valid UTF-8."""
+    u"""The longest prefix of `text` fitting `budget` of the filesystem's units
+    (`_units`), cut on a character boundary. ⚠ Truncating the encoded bytes would
+    split a multi-byte character and produce a name that is not valid UTF-8."""
     if budget <= 0:
         return u""
     out = text
-    while out and _bytes(out) > budget:
+    while out and _units(out) > budget:
         out = out[:-1]
     return out.rstrip()
 
@@ -703,6 +786,6 @@ __all__ = [
     "ISO_639_1", "LANGUAGE_TOKENS", "FLAG_TOKENS", "UNAMBIGUOUS_FLAGS",
     "CONTEXTUAL_FLAGS", "UND", "NAME_MAX",
     "Sidecar", "NameTooLong",
-    "parse", "parse_path", "output_name", "is_reserved", "has_trailing_junk",
-    "check_suffix", "suffixed_name", "is_suffixed",
+    "parse", "parse_path", "output_name", "check_code", "is_reserved",
+    "has_trailing_junk", "check_suffix", "suffixed_name", "is_suffixed",
 ]

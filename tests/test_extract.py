@@ -852,3 +852,51 @@ def test_a_forced_track_is_written_under_a_forced_name(tmp_path):
                        payloads=_srt_payloads(), forced=True)
     got = extract_subtitle(video, 2, write=True)
     assert got.ok and got.output_path == str(tmp_path / u"ep.ja.forced.srt"), got
+
+
+# ===========================================================================
+# ⭐ 0.1.10 -- what hato's 14z pass found this suite could not see (its A-9), and the C3
+# race through the ONE writer this function now shares with `place_subtitle`
+# ===========================================================================
+
+def test_the_written_name_carries_the_tracks_own_language(tmp_path):
+    u"""hato 14z, A-9: a mutant naming EVERY extracted track `ja` survived this suite --
+    every fixture's track was Japanese. An English track is `en`, and written `.en.`."""
+    video = _write_mkv(tmp_path / u"ep.mkv", CUES, codec=u"S_TEXT/UTF8",
+                       payloads=_srt_payloads(), language=u"eng")
+    got = extract_subtitle(video, 2, write=True)
+    assert got.ok and got.lang == u"en", got
+    assert got.output_path == str(tmp_path / u"ep.en.srt"), got.output_path
+
+
+def test_a_refused_track_writes_nothing_even_when_asked(tmp_path):
+    u"""hato 14z, A-9: a mutant writing a REFUSED track anyway -- a zero-byte file with no
+    extension beside the video -- survived this suite. A refusal writes nothing."""
+    video = _write_mkv(tmp_path / u"ep.mkv", CUES, codec=u"S_HDMV/PGS")
+    got = extract_subtitle(video, 2, write=True)
+    assert not got.ok and got.output_path is None and not got.write_failed, got
+    assert _listing(tmp_path) == [u"ep.mkv"], _listing(tmp_path)
+
+
+def test_a_file_landing_while_it_writes_is_not_overwritten(tmp_path, monkeypatch):
+    u"""🚨 hato 14z (C3): the writer looked for the name, then REPLACED it -- a file landing
+    between the two (3.6 ms median on a local disk) was overwritten. It is planted while
+    the temporary is flushed, after any look could have happened, and must survive."""
+    from tsubasa import paths as P
+    video = _write_mkv(tmp_path / u"ep.mkv", CUES, codec=u"S_TEXT/UTF8",
+                       payloads=_srt_payloads())
+    theirs = tmp_path / u"ep.ja.srt"
+    real = os.fsync
+
+    def plant(fd):
+        real(fd)
+        if not theirs.exists():
+            theirs.write_bytes(u"割り込み".encode("utf-8"))
+
+    monkeypatch.setattr(P.os, "fsync", plant)
+    got = extract_subtitle(video, 2, write=True)
+    monkeypatch.setattr(P.os, "fsync", real)
+    assert got.ok and got.write_failed and got.output_path is None, got
+    assert u"already there" in got.reason, got.reason
+    assert theirs.read_bytes() == u"割り込み".encode("utf-8"), u"a file landing was overwritten"
+    assert _listing(tmp_path) == [u"ep.ja.srt", u"ep.mkv"], u"a temporary was left behind"

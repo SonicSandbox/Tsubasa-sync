@@ -247,27 +247,23 @@ def _extract(path, index, given):
 
 def _write(got, path, out_dir):
     u"""Write `got.data` under tsubasa's name for it. ⛔ Never over a file that is there;
-    a write that does not land sets `write_failed` -- `ok` and `data` stand."""
-    from .paths import atomic_write_bytes
-    from .sidecar import output_name
-    folder = os.fsdecode(os.fspath(out_dir)) if out_dir else os.path.dirname(path)
-    stem = os.path.splitext(os.path.basename(path))[0]
-    name, notes = output_name(stem, got.lang, got.ext,
-                              flags=(u"forced",) if got._forced else ())
-    got.notes = tuple(notes)
-    target = os.path.join(folder, name)
-    if os.path.lexists(target):
-        got.write_failed = True
-        got.reason = (u"%s is already there -- nothing was written over it"
-                      % os.path.basename(target))
-        return
+    a write that does not land sets `write_failed` -- `ok` and `data` stand.
+
+    ⭐ 0.1.10 -- THE ONE WRITER, shared with `place_subtitle` (`place._name_for` and
+    `place._write_new`). It used to look for the name and then REPLACE it, and a file
+    landing between the two was overwritten (hato 14z, C3); the write now refuses a name
+    already taken in the same step that publishes it, and a folder that refuses a new
+    file fails at once instead of spinning (hato 14z, A-1)."""
+    from .place import _name_for, _write_new
     try:
-        atomic_write_bytes(target, got.data)
-    except OSError as exc:
+        target, notes = _name_for(path, out_dir, got.lang, got.ext,
+                                  flags=(u"forced",) if got._forced else ())
+    except ValueError as exc:
         got.write_failed = True
-        got.reason = u"%s could not be written: %s" % (os.path.basename(target), exc)
+        got.reason = u"no name could be made for it: %s" % exc
         return
-    got.output_path = target
+    got.notes = tuple(notes)
+    _write_new(got, target, got.data)
 
 
 def _differs(given, entry):
