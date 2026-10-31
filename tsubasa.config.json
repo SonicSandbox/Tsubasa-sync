@@ -6,7 +6,7 @@
   "corpus": {
     "//": "Resolution order: TSUBASA_CORPUS env var, then this path resolved RELATIVE TO THIS FILE. Nothing hardcodes a machine -- see spec/10-deployment.md (migration). `corpus --stat` prints which one resolved and why, so a wrong path is visible immediately rather than three features in.",
     "envVar": "TSUBASA_CORPUS",
-    "defaultRelative": "../../../WorldDominationLite/tsubasa-corpus",
+    "defaultRelative": "../../AppData/tsubasa/corpus",
 
     "//readOnly": "The suite must NEVER write inside the corpus. subsync shipped a defect where analyze dropped _ref_2.ass and a 500 KB .npy beside the subtitles it was reading, inside a corpus its own README marks read-only. spec/07-test-plan.md enforces this as the one hard exception.",
     "readOnly": true,
@@ -45,7 +45,7 @@
   "media": {
     "//": "REAL VIDEO CONTAINERS, for the checks that need one. RUNBOOK 1d (the native container reader) must be proved against a real MKV, and the only real ones on the originating machine sat in a Desktop folder outside the corpus -- which HANDOFF.md forbids a suite from naming. So the suite asks paths.media_root() and SKIPS, with the reason printed, on a machine that has none.",
     "envVar": "TSUBASA_MEDIA",
-    "defaultRelative": "../../../WorldDominationLite/tsubasa-corpus/video",
+    "defaultRelative": "../../AppData/tsubasa/corpus/video",
     "//readOnly": "Read-only, like the corpus. Nothing here is ever written, moved or renamed by the tool or the suite.",
     "//default": "The default now RESOLVES: 0c staged video/Sintel-60s.mkv (an ffmpeg-muxed 60s CC-BY clip with a subtitle track) beside Sintel-60s.srt, ffmpeg's own extraction of that track. So the four real-container checks run on a fresh clone with no configuration, and TSUBASA_MEDIA is an OVERRIDE for pointing at a bigger library -- not a requirement.",
     "//gap": "CLOSED 2026-09-08 at RUNBOOK 0c. Was: 'RUNBOOK 1d says against the corpus .mkv fixtures and the corpus contains NO .mkv at all'. Kept as the record -- the checks were skipping, not passing, and nothing on screen said so."

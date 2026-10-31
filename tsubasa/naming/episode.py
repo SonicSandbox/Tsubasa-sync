@@ -233,6 +233,8 @@ def strip_noise(name):
 
 # 🚨 `第N話` OUTRANKS a platform's `S##E##`. `NARUTO…疾風伝.S06E01.第113話` is
 # episode 113; reading the S06E01 gives 1 and it never pairs.
+# ⭐ The S06E01 is not thrown away: `parse_ours` keeps it as `extras["dual"]`
+# = (6, 1, 113), read by `Item.dual_numbering` (hato aligns a release by it).
 P_JA_EPISODE = re.compile(u"第\\s*(\\d{1,4})\\s*[話话回]")
 P_SXXEXX = re.compile(r"[sS](\d{1,3})\s*[eE](?:[pP])?\s*(\d{1,4})")
 P_SEASON_X_EP = re.compile(r"(?<![\w])(\d{1,2})\s*[xX]\s*(\d{1,3})(?![\w])")
@@ -441,6 +443,22 @@ def parse_ours(filename):
         m2 = P_JA_EPISODE.search(working)
         if m2:
             cut = m2.start()
+        # ⭐ AND THE NAME'S OTHER NUMBER IS KEPT, never thrown away. A platform
+        # release writes BOTH: `葬送のフリーレン.S02E06.第34話` is season 2
+        # episode 6 AND broadcast episode 34. `第N話` still wins `episode`
+        # (above), so nothing that pairs on `key` changes; the season-episode
+        # rides along in `extras` for a caller that numbers by season. The
+        # pair states a BRIDGE between the two counts (S2E6 = 34, so season 2
+        # starts at 29), which no other part of a name can say.
+        # ⛔ Only when the two disagree is it news -- but it is recorded when
+        # they agree too (`S01E01.第1話`): agreement is also a stated fact.
+        sxe = P_SXXEXX.search(working)
+        if sxe:
+            extras_dual = (_int(sxe.group(1)), _int(sxe.group(2)), episode)
+        else:
+            extras_dual = None
+    else:
+        extras_dual = None
     if episode is None:
         m = P_SXXEXX.search(working)
         if m:
@@ -542,7 +560,8 @@ def parse_ours(filename):
 
     if episode is not None:
         return Parsed(title, episode=episode, episode_end=episode_end,
-                      season=season, kind=EPISODE, source="ours", group=group)
+                      season=season, kind=EPISODE, source="ours", group=group,
+                      extras={"dual": extras_dual} if extras_dual else None)
 
     if date:
         return Parsed(title, season=season, kind=FILM, source="ours",
@@ -593,13 +612,36 @@ def _title_from(working, episode, season, cut_at=None):
 # the union
 # --------------------------------------------------------------------------
 
+# 🚨 ANITOPY 2.1.1 LOOPS FOR EVER ON A NAME ENDING IN A LONE DASH.
+# `search_for_episode_title` skips a dash token within two tokens of the end
+# with `continue` -- and with nothing after it, `token_end` is None, so the
+# next turn starts the search from the top and finds the same dash. No
+# exception, no timeout: the scan (and hato's window) sits "working" for ever.
+#
+#     00Show.S01.E01ONAS01E - .mkv     Show - 01 - .mkv     Show S01E01 —.mkv
+#
+# Our own parser answers most such names, so only one that defeats it reaches
+# anitopy (hato's 10-04 bug hunt found it by fuzzing). ⭐ The trailing run of
+# separators holding a dash is taken off before anitopy sees the name, the
+# extension kept: it carries nothing anitopy reads. Measured over 66,789
+# generated names: 882 looped, 0 after the strip.
+_ANITOPY_DASH = u"\\-\u2010-\u2015"            # anitopy's DASHES
+_ANITOPY_TAIL = re.compile(u"[\\s_.&+,|%s]*[%s][\\s_.&+,|%s]*(\\.[A-Za-z0-9]{1,5})?$"
+                           % (_ANITOPY_DASH, _ANITOPY_DASH, _ANITOPY_DASH))
+
+
+def _anitopy_safe(filename):
+    u"""The name with a trailing dash run removed, so anitopy cannot loop on it."""
+    return _ANITOPY_TAIL.sub(lambda m: m.group(1) or u"", filename)
+
+
 def parse_anitopy(filename):
     try:
         import anitopy
     except ImportError:
         return None
     try:
-        d = anitopy.parse(filename)
+        d = anitopy.parse(_anitopy_safe(filename))
     except Exception:
         return None
     if not d:

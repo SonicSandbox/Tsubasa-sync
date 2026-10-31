@@ -579,3 +579,73 @@ def test_the_grouping_key_is_season_and_episode():
     b = parse_ours(u"Show.S03E03.srt")
     assert a.episode == b.episode == 3
     assert a.key() != b.key(), "season is missing from the grouping key"
+
+
+# --------------------------------------------------------------------------
+# ⭐ a name that states TWO numberings keeps both (hato's Frieren finding, 2026-10-11)
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name, episode, dual", [
+    (u"葬送のフリーレン.S02E06.第34話 討伐要請.WEBRip.Amazon.ja-jp[sdh].srt", 34, (2, 6, 34)),
+    (u"NARUTO-ナルト-疾風伝.S06E01.第113話.WEBRip.Netflix.ja[cc].srt", 113, (6, 1, 113)),
+    (u"正反対な君と僕.S01E01.第1話.正反対な君.WEBRip.Amazon.ja-jp[sdh].srt", 1, (1, 1, 1)),
+    (u"ワンピース.S10E026.第1025話 最悪の世代全滅!.WEBRip.Amazon.ja.srt", 1025, (10, 26, 1025)),
+])
+def test_a_name_stating_both_numberings_keeps_the_second(name, episode, dual):
+    u"""`第N話` still wins `episode` (pairing is unchanged); the season-episode the name
+    ALSO writes rides along as `extras["dual"]` -- (season, episode, absolute)."""
+    p = parse_ours(name)
+    assert p.episode == episode and p.season is None, p
+    assert p.extras.get("dual") == dual, p.extras
+
+
+@pytest.mark.parametrize("name", [
+    u"葬送のフリーレン.S02E05.北部高原の物流.WEBRip.Amazon.ja-jp[sdh].srt",
+    u"[Haruhana] Sousou no Frieren - 34 [WebRip][HEVC-10bit 1080p][JPN].ass",
+    u"来世ではちゃんとします 第3話.srt",
+])
+def test_a_name_stating_one_numbering_states_no_second(name):
+    assert not parse_ours(name).extras.get("dual"), parse_ours(name).extras
+
+
+# --------------------------------------------------------------------------
+# 🚨 anitopy 2.1.1 loops for ever on a name ending in a lone dash (hato's 10-04 hunt, #5)
+# --------------------------------------------------------------------------
+
+def test_a_name_ending_in_a_lone_dash_is_parsed_and_does_not_hang():
+    u"""🚨 `00Show.S01.E01ONAS01E - .mkv` defeats our parser, reaches anitopy, and
+    anitopy's episode-title search spun on the trailing dash for ever: the scan
+    never returned. ⛔ Run in a CHILD under a time limit, so a regression FAILS
+    this check instead of hanging the whole suite."""
+    import subprocess
+    names = [u"00Show.S01.E01ONAS01E - .mkv",      # the 10-04 find, the real path
+             u"[Grp] Show - 01 - .mkv",              # force: every parser asked
+             u"Show S01E01 —.mkv",
+             u"00Show.S01.E01ONAS01E - "]
+    code = (u"import sys\n"
+            u"from tsubasa.naming.episode import union\n"
+            u"n = sys.argv[1]\n"
+            u"print(union(n).episode, union(n, force=True).episode)\n")
+    for name in names:
+        try:
+            proc = subprocess.run([sys.executable, "-c", code, name], cwd=str(ROOT),
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  timeout=60)
+        except subprocess.TimeoutExpired:
+            pytest.fail(u"union(%r) did not return in 60 s: anitopy is looping "
+                        u"on the trailing dash again" % name)
+        assert proc.returncode == 0, (name, proc.stdout.decode("utf-8", "replace"))
+
+
+@pytest.mark.parametrize("name, safe", [
+    (u"00Show.S01.E01ONAS01E - .mkv", u"00Show.S01.E01ONAS01E.mkv"),
+    (u"Show S01E01 _-_.MKV", u"Show S01E01.MKV"),
+    (u"Show S01E01 -", u"Show S01E01"),
+    (u"[Grp] Show - 01 [1080p].mkv", u"[Grp] Show - 01 [1080p].mkv"),
+    (u"Show - 01 - Episode Title.mkv", u"Show - 01 - Episode Title.mkv"),
+    (u"Show S01E01 - .ja.srt", u"Show S01E01 - .ja.srt"),
+])
+def test_only_a_trailing_dash_run_is_taken_off_before_anitopy(name, safe):
+    u"""The strip touches the tail and nothing else: a dash INSIDE a name is anitopy's
+    to read (`Show - 01 - Title`), and the extension stays."""
+    assert E._anitopy_safe(name) == safe

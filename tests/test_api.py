@@ -1555,3 +1555,24 @@ def test_separate_small_gaps_do_not_ADD_UP_to_a_refusal(tmp_path):
 
     assert (r.outcome, r.verdict_word) == (V.CONFIDENT, u"fair"), \
         (r.outcome, r.verdict_word, r.reason)
+
+
+def test_a_name_stating_two_numberings_says_both_and_changes_neither(tmp_path):
+    u"""⭐ ADDED, never renamed (hato's Frieren finding, 2026-10-11). `Item.dual_numbering`
+    is (season, episode, absolute) for `S02E06.第34話`; season / episode / candidates
+    read exactly what they always read."""
+    dual = u"葬送のフリーレン.S02E06.第34話 討伐要請.WEBRip.Amazon.ja-jp[sdh].srt"
+    plain = u"葬送のフリーレン.S02E05.北部高原の物流.WEBRip.Amazon.ja-jp[sdh].srt"
+    _touch(tmp_path, dual, plain)
+    by = dict((s.name, s) for s in tsubasa.scan(str(tmp_path)).subtitles)
+    d = by[dual]
+    assert (d.season, d.episode, d.episode_candidates) == (None, 34, (34,))
+    assert getattr(d, "dual_numbering", None) == (2, 6, 34)
+    p = by[plain]
+    assert (p.season, p.episode) == (2, 5) and getattr(p, "dual_numbering", u"absent") is None
+    # ⚠ When the name was disputed, anitopy and guessit sit beside our parser in
+    # `results` and know nothing of a second number: it is read from OURS.
+    from tsubasa.naming.episode import union
+    asked_all = DISC.Item(str(tmp_path / dual), "subtitle", union(dual, force=True))
+    assert len(asked_all.parsed.results) > 1 and asked_all.dual_numbering == (2, 6, 34)
+    assert DISC.Item(str(tmp_path / dual), "subtitle").dual_numbering is None
