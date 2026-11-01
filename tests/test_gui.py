@@ -3535,3 +3535,35 @@ def test_an_empty_folder_quotes_the_cli_too(tmp_path):
     assert run.code == RUN.EXIT_CLEAN, u"stderr: %r" % run.stderr[:400]
     assert run.no_rows is True
     assert run.headline() == run.summary
+
+
+def _load_run_gui():
+    import importlib.machinery
+    import importlib.util
+    path = os.path.join(ROOT, "run_gui.pyw")
+    loader = importlib.machinery.SourceFileLoader("tsubasa_run_gui_under_test", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def test_the_window_looks_for_ffmpeg_in_Resources_beside_Code():
+    u"""Found 2026-10-02: the code moved into a `Code` folder on 10-01, and
+    `run_gui.pyw` kept looking beside the OLD checkout (`Workshop/media-kit/bin`)
+    -- a folder that no longer existed -- so the window lost ffmpeg silently.
+    The development layout keeps it in `Resources/tools/ffmpeg` beside `Code`.
+    `run_gui.pyw` is a development launcher and is not published: a checkout
+    without it skips."""
+    if not os.path.isfile(os.path.join(ROOT, "run_gui.pyw")):
+        pytest.skip(u"no run_gui.pyw beside the tests (a published checkout): nothing to check")
+    mod = _load_run_gui()
+    base = os.path.dirname(os.path.dirname(ROOT))
+    want = os.path.join(base, u"Resources", u"tools", u"ffmpeg")
+    got = mod._ffmpeg_dir()
+    assert os.path.normcase(got) == os.path.normcase(want), \
+        u"the window looks for ffmpeg in %r, the layout keeps it in %r" % (got, want)
+    if not os.path.isdir(os.path.join(base, u"Resources")):
+        pytest.skip(u"no Resources folder beside Code: the path's shape is all that is checkable")
+    assert os.path.isfile(os.path.join(got, u"ffmpeg.exe")), \
+        u"%r is where the window looks, and it holds no ffmpeg.exe" % got

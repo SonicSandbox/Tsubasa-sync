@@ -245,6 +245,8 @@ subtitle.lang, subtitle.lang_tag            # "ja", "ja[cc]"
 ```
 
 - `episode` is an `int`, or a `float` for a half episode such as `13.5` — never rounded.
+- `dual_numbering` is `(season, episode, absolute)` when a name states both counts:
+  `Show.S02E06.第34話.mkv` reads `episode` 34 and `dual_numbering` `(2, 6, 34)`. Otherwise `None`.
 - `lang` is resolved: `.ja.`, `.jpn.`, `.JA.` and `.ja-JP.` all read `ja`. A name with no
   language reads `und`. For a video, `lang` is `None`.
 

@@ -39,6 +39,7 @@ TRAPS ALREADY PAID FOR, from `LEDGER.md` §Environment:
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -249,11 +250,13 @@ def read(path, timing=True, cache_dir=None):
         except (TypeError, ValueError):
             duration = None
 
+    metadata = _metadata_streams(ffprobe, path, meta.get("streams", []),
+                                 fmt.get("format_name") or u"")
     tracks = []
     for stream in meta.get("streams", []):
         kind = stream.get("codec_type") or "other"
         tags = stream.get("tags") or {}
-        if (stream.get("disposition") or {}).get("metadata"):
+        if stream.get("index") in metadata:
             # ⚠ ffprobe calls a WebVTT METADATA track (`D_WEBVTT/METADATA`)
             # a subtitle stream and flags it `metadata` -- measured at RUNBOOK
             # 3f. The native reader calls it what it is, so this does too.
@@ -297,6 +300,61 @@ def read(path, timing=True, cache_dir=None):
         # construction -- there is no index here that could be partial.
         track["index_verified"] = True
     return result
+
+
+#: One stream line of ffprobe's listing: `  Stream #0:7(jpn): Subtitle: webvtt
+#: (metadata)`, or `Stream #0:2[0x102](ja ): ...` -- an MPEG-TS id, and a
+#: language may hold a SPACE (adversary). A track's title goes on a line of
+#: its own, below.
+_LISTED_SUBTITLE = re.compile(
+    r"^\s*Stream #\d+:(\d+)(?:\[[^\]]*\])?(?:\([^)]*\))?: Subtitle: (.*)$")
+
+
+def _metadata_streams(ffprobe, path, streams, format_name):
+    """The indexes of the streams ffprobe flags `metadata`. -> set
+
+    🚨 ffprobe 4.x does not print that flag in its JSON at all -- it prints
+    twelve dispositions and `metadata` is not one (Ubuntu 22.04's 4.4.2,
+    measured on tsubasa's first Linux run) -- so a METADATA track read as
+    absent = not flagged, and came back a Japanese TEXT track. 5.0 and later
+    print every disposition, so the JSON answers and nothing more is asked.
+    Only where a subtitle stream's JSON cannot say is the stream listing read,
+    which every version prints with the flag: `Subtitle: webvtt (metadata)`.
+    ⛔ A listing that cannot say either RAISES -- *nobody could tell* -- since
+    a guess in either direction is one hato acts on.
+    ⚠ Asked of MATROSKA only (WebM included): the one shape measured to carry
+    the flag on a subtitle stream is its `D_WEBVTT/METADATA` codec (ffmpeg
+    4.4 wrote no flag back into MP4, MOV or MKV when asked to), and MP4 and
+    MPEG-TS, which always come this way, would otherwise pay a second probe
+    -- and gain a new way to be refused -- for that question (adversary).
+    """
+    flagged = set(s.get("index") for s in streams
+                  if (s.get("disposition") or {}).get("metadata"))
+    unsaid = [s.get("index") for s in streams
+              if s.get("codec_type") == "subtitle"
+              and "metadata" not in (s.get("disposition") or {})]
+    if not unsaid or u"matroska" not in format_name.split(u","):
+        return flagged
+
+    out, err = _run([ffprobe, "-hide_banner", "-v", "info", str(path)],
+                    TIMEOUT_PROBE)
+    if out is None:
+        raise ValueError(u"this ffprobe does not say which subtitle streams "
+                         u"are metadata, and listing them failed: %s" % err)
+    listed = {}
+    # ⛔ "\n" only, never `splitlines()`: ffmpeg escapes a newline in a title
+    # but not U+2028 or U+0085, so a title could write a stream line of its
+    # own and hide a real track (adversary).
+    for line in err.split(u"\n"):
+        match = _LISTED_SUBTITLE.match(line)
+        if match:
+            listed[int(match.group(1))] = u"(metadata)" in match.group(2)
+    missing = [i for i in unsaid if i not in listed]
+    if missing:
+        raise ValueError(u"this ffprobe does not say which subtitle streams "
+                         u"are metadata, and its stream listing does not "
+                         u"name stream %s" % u", ".join(str(i) for i in missing))
+    return flagged | set(i for i in unsaid if listed[i])
 
 
 def _chapters(meta):

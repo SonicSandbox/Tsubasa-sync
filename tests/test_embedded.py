@@ -501,6 +501,211 @@ def test_the_native_reader_agrees_with_the_RECORDED_tool_on_the_same_file(tmp_pa
     assert _answer(subs) == EXPECTED, _answer(subs)
 
 
+#: ffprobe 4.4.2 (Ubuntu 22.04's `ffmpeg` package) on the same file, recorded
+#: on the server 2026-10-04 with `ffprobe -v error -print_format json
+#: -show_format -show_streams` and trimmed to the fields `container/ffmpeg.py`
+#: reads. 🚨 Its disposition has NO `metadata` key at all: 4.x prints twelve
+#: dispositions and `metadata` is not among them, so its JSON cannot tell the
+#: METADATA track from a subtitle -- and read as absent = 0, track 30 became a
+#: Japanese TEXT track, the mistake that skips a download somebody needed.
+RECORDED_FFPROBE_4 = {
+    "format": {"format_name": "matroska,webm"},
+    "streams": [dict(s, disposition={"default": s["disposition"]["default"],
+                                     "forced": s["disposition"]["forced"]})
+                for s in RECORDED_FFPROBE["streams"]],
+}
+
+#: The same tool's stream listing for the same file -- `ffprobe -hide_banner
+#: -v info`, stderr, verbatim but for the path. It DOES print the flag.
+RECORDED_DUMP_4 = u"""\
+[matroska,webm @ 0x557a622f0980] Could not find codec parameters for stream 3 (Subtitle: hdmv_pgs_subtitle (pgssub)): unspecified size
+Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
+Input #0, matroska,webm, from 'v.mkv':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0(jpn): Subtitle: ass (default)
+  Stream #0:1(eng): Subtitle: subrip
+  Stream #0:2: Subtitle: subrip
+  Stream #0:3(jpn): Subtitle: hdmv_pgs_subtitle
+  Stream #0:4(eng): Subtitle: ass (forced)
+  Stream #0:5(jpn): Subtitle: dvd_subtitle
+  Stream #0:6(jpn): Subtitle: dvb_subtitle
+  Stream #0:7(jpn): Subtitle: webvtt (metadata)"""
+
+
+#: ffprobe 4.4.2 on a file holding only `VIDEO` and an `A_MPEG/L3` audio
+#: track, recorded the same way -- JSON trimmed, listing verbatim but for the
+#: path. Its listing has no `Subtitle:` line to read.
+RECORDED_FFPROBE_4_NO_SUBS = {
+    "format": {"format_name": "matroska,webm"},
+    "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "h264",
+         "disposition": {"default": 1, "forced": 0}},
+        {"index": 1, "codec_type": "audio", "codec_name": "mp3", "tags": {"language": "jpn"},
+         "disposition": {"default": 1, "forced": 0}},
+    ],
+}
+RECORDED_DUMP_4_NO_SUBS = u"""\
+[matroska,webm @ 0x55835d5ca980] Could not find codec parameters for stream 0 (Video: h264, none): unspecified size
+Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
+[matroska,webm @ 0x55835d5ca980] Could not find codec parameters for stream 1 (Audio: mp3 (mp3float), 0 channels, fltp): unspecified frame size
+Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
+Input #0, matroska,webm, from 'v.mkv':
+  Duration: N/A, bitrate: N/A
+  Stream #0:0: Video: h264, none, 1k tbr, 1k tbn, 2k tbc (default)
+    Side data:
+      stereo3d: 2D
+  Stream #0:1(jpn): Audio: mp3, 0 channels, fltp (default)"""
+
+
+def _ffprobe_4(monkeypatch, dump=RECORDED_DUMP_4, probe=RECORDED_FFPROBE_4):
+    u"""The ffmpeg rung answering as ffprobe 4.4.2 did: the JSON to a
+    `-show_streams` call, the stream listing (on stderr, exit 0) to a bare
+    one. `dump=None` is a listing call that fails. -> the argv of every call"""
+    calls = []
+
+    def run(argv, timeout):
+        calls.append(list(argv))
+        if u"-show_streams" in argv:
+            return json.dumps(probe), u""
+        if dump is None:
+            return None, u"ffprobe exited 1: v.mkv: Invalid data found when processing input"
+        return u"", dump
+
+    monkeypatch.setenv("TSUBASA_NO_NATIVE_DEMUX", "1")
+    monkeypatch.setattr(ffmod, "find", lambda tool="ffprobe", cache_dir=None: u"ffprobe")
+    monkeypatch.setattr(ffmod, "_run", run)
+    return calls
+
+
+def test_an_ffprobe_too_old_to_print_the_metadata_flag_still_never_calls_it_text(
+        tmp_path, monkeypatch):
+    u"""🚨 Found on the first Linux run (2026-10-04): the live parity check
+    below went red against Ubuntu's ffprobe 4.4.2, which reported the WebVTT
+    METADATA track as a seventh Japanese text track. The recording holds the
+    fix on every machine, whatever ffprobe it has."""
+    _ffprobe_4(monkeypatch)
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok, subs.reason
+    assert _answer(subs) == EXPECTED, _answer(subs)
+
+
+def test_on_an_old_ffprobe_a_WebVTT_SUBTITLE_track_is_still_text(tmp_path, monkeypatch):
+    u"""The other half: the listing decides, not the codec. A WebVTT track the
+    listing does NOT flag stays a text subtitle -- dropping every WebVTT track
+    on an old ffprobe would hide a real one. (The recording with its one flag
+    removed: constructed, not recorded.)"""
+    _ffprobe_4(monkeypatch, dump=RECORDED_DUMP_4.replace(u"webvtt (metadata)", u"webvtt"))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok, subs.reason
+    assert _answer(subs) == EXPECTED + [(7, u"ja", True, False, False, False)], _answer(subs)
+
+
+@pytest.mark.parametrize("dump", [None, u"Input #0, matroska,webm, from 'v.mkv':"],
+                         ids=["listing-fails", "listing-names-no-streams"])
+def test_on_an_old_ffprobe_a_listing_that_cannot_say_is_nobody_could_tell(
+        tmp_path, monkeypatch, dump):
+    u"""⛔ When neither the JSON nor the listing says whether a track is
+    METADATA, the answer is *nobody could tell* -- never a guess, in either
+    direction, that hato would act on."""
+    _ffprobe_4(monkeypatch, dump=dump)
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok is False, subs
+    assert u"metadata" in subs.reason, subs.reason
+
+
+def test_on_an_old_ffprobe_a_file_with_no_subtitle_track_has_none_and_is_asked_ONCE(
+        tmp_path, monkeypatch):
+    u"""(mutant) Only a SUBTITLE stream's silence is a question: asked of the
+    video and audio too, every file an old ffprobe reads would wait on a
+    listing that has no `Subtitle:` line to answer it -- and be refused."""
+    calls = _ffprobe_4(monkeypatch, dump=RECORDED_DUMP_4_NO_SUBS,
+                       probe=RECORDED_FFPROBE_4_NO_SUBS)
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", [VIDEO, AUDIO]))
+    assert subs.ok, subs.reason
+    assert subs.tracks == [], subs.tracks
+    assert len(calls) == 1, calls
+
+
+def _recorded_4(**streams):
+    u"""`RECORDED_FFPROBE_4` with some streams' tags replaced: {index: tags}."""
+    probe = json.loads(json.dumps(RECORDED_FFPROBE_4))
+    for s in probe["streams"]:
+        if "s%d" % s["index"] in streams:
+            s["tags"] = streams["s%d" % s["index"]]
+    return probe
+
+
+def test_on_an_old_ffprobe_a_language_with_a_SPACE_still_reads(tmp_path, monkeypatch):
+    u"""(adversary) `Stream #0:0(ja n): Subtitle: ass` -- ffprobe 4.4.2's real
+    listing of a Language element `ja n`. The first pattern stopped at the
+    space, the stream went unnamed, and a file that read before the fix was
+    refused."""
+    dump = RECORDED_DUMP_4.replace(u"Stream #0:0(jpn)", u"Stream #0:0(ja n)")
+    _ffprobe_4(monkeypatch, dump=dump, probe=_recorded_4(s0={"language": "ja n"}))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok, subs.reason
+    assert [t.index for t in subs.tracks] == [0, 1, 2, 3, 4, 5, 6], _answer(subs)
+
+
+#: ffprobe 4.4.2's real listing for `RECORDED_TRACKS` with two TITLES carrying
+#: U+2028 and a forged stream line. ffmpeg escapes `\n` in a title and not
+#: U+2028, which `str.splitlines()` breaks on -- so a title could write lines.
+RECORDED_DUMP_4_FORGED = RECORDED_DUMP_4.replace(
+    u"  Stream #0:0(jpn): Subtitle: ass (default)",
+    u"  Stream #0:0(jpn): Subtitle: ass (default)\n    Metadata:\n      title           : "
+    u"Signs   Stream #0:0(jpn): Subtitle: webvtt (metadata)") + (
+    u"\n    Metadata:\n      title           : x   Stream #0:7(jpn): Subtitle: webvtt")
+
+
+def test_on_an_old_ffprobe_a_TITLE_cannot_write_a_line_of_the_listing(tmp_path, monkeypatch):
+    u"""(adversary) Read through `splitlines()`, these titles hid the real
+    Japanese ASS track and turned the METADATA track into text."""
+    _ffprobe_4(monkeypatch, dump=RECORDED_DUMP_4_FORGED, probe=_recorded_4(
+        s0={"language": "jpn", "title": u"Signs   Stream #0:0(jpn): Subtitle: webvtt (metadata)"},
+        s7={"language": "jpn", "title": u"x   Stream #0:7(jpn): Subtitle: webvtt"}))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok, subs.reason
+    assert _answer(subs) == EXPECTED, _answer(subs)
+
+
+def test_on_an_old_ffprobe_a_listing_that_skips_ONE_stream_is_nobody_could_tell(
+        tmp_path, monkeypatch):
+    u"""(adversary) *Unnamed = not metadata* survived every check while the
+    only incomplete listing named no stream at all. Here it names seven of
+    eight, and the missing one is the METADATA track."""
+    dump = RECORDED_DUMP_4.replace(u"\n  Stream #0:7(jpn): Subtitle: webvtt (metadata)", u"")
+    _ffprobe_4(monkeypatch, dump=dump)
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok is False, subs
+    assert u"stream 7" in subs.reason, subs.reason
+
+
+def test_on_an_old_ffprobe_a_container_that_is_NOT_Matroska_is_asked_ONCE(
+        tmp_path, monkeypatch):
+    u"""Only the Matroska demuxer flags a track `metadata` (`D_WEBVTT/METADATA`);
+    MP4 and MPEG-TS always come through ffprobe, so a second probe for them is
+    a cost -- and a new way to refuse a file that read before -- for a
+    question nothing else can raise. (The 4.4.2 shape, with the container
+    swapped: constructed.)"""
+    probe = _recorded_4()
+    probe["format"]["format_name"] = "mpegts"
+    calls = _ffprobe_4(monkeypatch, dump=u"", probe=probe)
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert subs.ok, subs.reason
+    assert len(calls) == 1, calls
+
+
+def test_a_current_ffprobe_is_asked_ONCE(tmp_path, monkeypatch, recorded_ffprobe):
+    u"""⭐ The Windows path, unchanged: ffprobe 5.0 and later print `metadata`
+    in the JSON, so the stream listing is never asked for."""
+    calls = []
+    monkeypatch.setattr(ffmod, "_run", lambda argv, timeout: (
+        calls.append(list(argv)) or (json.dumps(RECORDED_FFPROBE), u"")))
+    subs = tsubasa.embedded_subs(_mkv(tmp_path / "v.mkv", RECORDED_TRACKS))
+    assert _answer(subs) == EXPECTED, _answer(subs)
+    assert len(calls) == 1 and u"-show_streams" in calls[0], calls
+
+
 #: What ffprobe 5.0.1 printed for a Matroska file with 4 zero bytes where its
 #: first TrackEntry should start -- exit 0, NO streams -- recorded by the
 #: adversarial pass (`adv3f/probes/p04_b_layouts.py`), verbatim.

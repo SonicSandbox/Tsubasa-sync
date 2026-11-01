@@ -253,6 +253,24 @@ class Item(object):
         return () if self.episode is None else (self.episode,)
 
     @property
+    def dual_numbering(self):
+        u"""A name that states TWO numberings -> (season, episode, absolute), else None.
+
+        ⭐ `葬送のフリーレン.S02E06.第34話 …` -> `(2, 6, 34)`: season 2 episode 6,
+        which is broadcast episode 34. `season` / `episode` still read the
+        broadcast number (None, 34) -- `第N話` outranks a platform's `S##E##`,
+        and pairing keys on it -- so this is ADDED, never a change to them.
+        The pair is a stated bridge between the two counts; a caller that
+        numbers by season (hato aligning a release) reads it here.
+        ⚠ From our own parser only, and only for `S##E##` beside `第N話/回`.
+        """
+        parsed = self.parsed
+        ours = parsed.results[0] if getattr(parsed, "results", None) else parsed
+        extras = getattr(ours, "extras", None) or {}
+        dual = extras.get("dual")
+        return tuple(dual) if dual else None
+
+    @property
     def lang(self):
         u"""A subtitle's language: `ja`, `en`, `zh`… or `und`. None for a video.
 
