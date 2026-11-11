@@ -196,6 +196,7 @@ print(report.summary())    # "1 refused · 23 synced" — anything needing atten
 | `superseded` | files that went to the trash |
 | `lang` · `lang_tag` | the language resolved (`ja`), and as the name wrote it (`jpn`) |
 | `forced` · `write_failed` | a forced write happened; a write was attempted and did not land |
+| `undetermined` | for a cut file, per break: `[lo, hi]` in video time, the stretch the break is somewhere inside — lines retimed there may sit on the wrong side of it |
 | `dropped_in_gap` · `dropped_before_zero` | lines removed because they fell in a cut, or before the video starts |
 | `notes` | anything else worth telling a person |
 

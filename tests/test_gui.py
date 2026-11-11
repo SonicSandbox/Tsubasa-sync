@@ -102,6 +102,7 @@ def a_record(outcome=u"CONFIDENT", **kw):
         u"write_failed": False,
         u"episode": 1,
         u"notes": [],
+        u"undetermined": [],
     }
     raw.update(kw)
     return raw

@@ -1010,3 +1010,21 @@ def test_a_real_CUT_file_is_written_WITH_its_segments(oracle):
     assert len(v.segments) > 1, (
         "the cut file resolved to one segment, so this check is not looking "
         "at what it claims to")
+
+
+# --- the undetermined span, carried out (Surasura's field report, rezeroS04E18) -
+
+def test_a_cut_verdict_carries_the_span_its_break_is_undetermined_across():
+    u"""`segments[0][0]` is only the EARLIEST tie (`_boundary_time`): on Re:Zero
+    S04E18 against its AT-X broadcast the break was reported at 158.86 s while
+    it lies near 190 s, and eight cues retimed between them carried the second
+    segment's offset, ~10 s late. `Fit.gaps` says so -- `(158.86, 214.85)` --
+    and the verdict must carry it out rather than drop it on the floor."""
+    fit = make_fit(segments=((158.86, -1.308), (None, 8.726)))
+    fit.gaps = [(158.86, 214.85)]
+    v = V.verdict(fit)
+    assert v.undetermined == [(158.86, 214.85)]
+
+
+def test_a_one_segment_verdict_has_no_undetermined_span():
+    assert V.verdict(make_fit()).undetermined == []

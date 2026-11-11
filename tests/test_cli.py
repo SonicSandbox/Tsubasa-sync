@@ -725,6 +725,16 @@ def test_json_carries_EVERY_field_Result_carries():
         assert field in row, u"--json drops Result.%s" % field
 
 
+def test_json_carries_the_undetermined_span_of_a_cut_file():
+    u"""A consumer cutting audio by the written cues needs to know which ones
+    sit where the break is undetermined (`Fit.gaps`, reference time)."""
+    row = CLI.as_json(a_result(segments=[(158.86, -1.308), (None, 8.726)],
+                               undetermined=[(158.86, 214.85)]))
+    assert row[u"undetermined"] == [[158.86, 214.85]]
+    assert json.loads(json.dumps(row))[u"undetermined"] == [[158.86, 214.85]]
+    assert CLI.as_json(a_result())[u"undetermined"] == []
+
+
 def test_json_is_NEVER_SILENT_over_a_settled_library(tmp_path, out, err,
                                                      monkeypatch):
     u"""⛔ Found by looking. A settled library produces no `Result` at all, so

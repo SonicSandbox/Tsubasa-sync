@@ -753,7 +753,7 @@ class Result(object):
                  "dropped_in_gap", "dropped_before_zero", "reference_kind",
                  "reference", "output_path", "superseded", "would_supersede",
                  "lang", "lang_tag",
-                 "forced", "write_failed", "episode", "notes")
+                 "forced", "write_failed", "episode", "notes", "undetermined")
 
     def __init__(self, video, subtitle, outcome, reason=u"", segments=(),
                  match_rate=0.0, excess_over_chance=0.0, raw_excess=0.0,
@@ -763,7 +763,7 @@ class Result(object):
                  reference_kind=TEXT_TRACK, reference=u"", output_path=None,
                  superseded=(), would_supersede=(), lang=None,
                  lang_tag=u"", forced=False,
-                 write_failed=False, episode=None, notes=()):
+                 write_failed=False, episode=None, notes=(), undetermined=()):
         if outcome not in OUTCOMES:
             raise ValueError(
                 "outcome %r is not one of %s (03-permissions.md). There is no "
@@ -906,6 +906,13 @@ class Result(object):
         #: the column is the caller's decision, not this object's.
         self.episode = episode
         self.notes = list(notes)
+        #: Per boundary of a cut file, `(lo, hi)` in REFERENCE (video) time:
+        #: the stretch the break is somewhere inside (`Fit.gaps`). ⚠ The split
+        #: `segments` reports is only its earliest point, so a cue the written
+        #: file places inside it may carry the wrong segment's offset -- a
+        #: consumer cutting audio by those cues (Surasura's Connect) needs to
+        #: know which ones. Empty for a one-segment file.
+        self.undetermined = [(float(lo), float(hi)) for lo, hi in undetermined]
 
     @property
     def match_percent(self):
