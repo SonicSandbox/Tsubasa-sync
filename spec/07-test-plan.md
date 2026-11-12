@@ -14,7 +14,8 @@ date: 2026-09-08
 
 ## ⛔ Where the corpus lives — a standing rule
 
-`C:\Users\Michael\Documents\InfiniteVoid\WorldDominationLite\tsubasa-corpus\` — never
+`C:\Sonic\AppData\tsubasa\corpus\` (since 2026-10-14; was
+`C:\Users\Michael\Documents\InfiniteVoid\WorldDominationLite\tsubasa-corpus\`) — never
 inside TheForge (`LEDGER-HOT.md`). The Desktop Yomi folder and `subsync/SubtitleMegaTest`
 are *outside* the corpus and the suite must never reference them directly; what a test
 needs is copied into `video-derived/` or already lives in `subsync/tests/fixtures/`.

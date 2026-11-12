@@ -725,6 +725,17 @@ def test_json_carries_EVERY_field_Result_carries():
         assert field in row, u"--json drops Result.%s" % field
 
 
+def test_json_carries_the_span_a_cut_files_break_lies_in():
+    u"""0.1.12 (based on Tsubasa-sync #2 by Mattias). A consumer cutting audio
+    by the written lines (Surasura's Connect) needs to know which lines start
+    where the break is undetermined -- reference time, `[lo, hi]` per break."""
+    row = CLI.as_json(a_result(segments=[(158.86, -1.308), (None, 8.726)],
+                               undetermined=[(158.86, 214.85)]))
+    assert row[u"undetermined"] == [[158.86, 214.85]]
+    assert json.loads(json.dumps(row))[u"undetermined"] == [[158.86, 214.85]]
+    assert CLI.as_json(a_result())[u"undetermined"] == []
+
+
 def test_json_is_NEVER_SILENT_over_a_settled_library(tmp_path, out, err,
                                                      monkeypatch):
     u"""⛔ Found by looking. A settled library produces no `Result` at all, so

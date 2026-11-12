@@ -67,7 +67,7 @@ from . import results as _results
 from . import sidecar as _sidecar
 from . import verdict as _verdict
 from .align import (BUCKET, MIN_ALIGNABLE_CUES, align, mapper_for,
-                    removed_spans, unique_starts)
+                    place_breaks, removed_spans, unique_starts)
 from .apply import apply_plan
 from .naming import series as _series
 from .verdict import BITMAP_TRACK, CONFIDENT, ERROR, REFUSED, TEXT_TRACK
@@ -83,6 +83,12 @@ from .verdict import BITMAP_TRACK, CONFIDENT, ERROR, REFUSED, TEXT_TRACK
 #: costs a wrong word in a report, never a wrong file.
 
 
+#: Seconds. A one-segment offset this small is the aligner's resolution (1.5
+#: `REFINE_STEP`s), not a measurement, and is written as zero -- see
+#: `measure()`. ⭐ 0.1.12.
+SETTLED_SHIFT = 0.015
+
+
 class Reference(object):
     u"""What a video's timing was read from.
 
@@ -92,14 +98,20 @@ class Reference(object):
     answer is a refusal that names what would change it.
     """
 
-    __slots__ = ("starts", "kind", "description", "duration", "track")
+    __slots__ = ("starts", "kind", "description", "duration", "track",
+                 "spans")
 
-    def __init__(self, starts, kind, description, duration, track=None):
+    def __init__(self, starts, kind, description, duration, track=None,
+                 spans=None):
         self.starts = starts
         self.kind = kind                # verdict.TEXT_TRACK / BITMAP_TRACK
         self.description = description
         self.duration = duration
         self.track = track
+        #: `(start, end)` per reference line, or None. ⭐ 0.1.12: what places
+        #: a cut file's break inside its span (`align.place_breaks`); without
+        #: it the break stays at `fit()`'s earliest tie.
+        self.spans = spans
 
     def __repr__(self):
         return "Reference(%s, %d cues, %s)" % (
@@ -483,7 +495,7 @@ def sync_to_reference(subtitle, reference):
     ref = Reference(starts, TEXT_TRACK,
                     u"subtitle file %s (%d cues)"
                     % (os.path.basename(reference), len(starts)),
-                    None)
+                    None, spans=[(c.start, c.end) for c in parsed.cues])
     m = measure(None, subtitle, ref)
     judge([m], clusters_for([m]))
     outcome, reason = _outcome_of(m), _reason_of(m)
@@ -730,7 +742,8 @@ def reference_for(video_path, reader):
     # rule*, wearing a new hat -- the fake and the real thing must agree about
     # the type, or the seam tests measure the fake.
     return Reference([c.start for c in track.cues], kind, description,
-                     info.duration, track), u""
+                     info.duration, track,
+                     spans=[(c.start, c.end) for c in track.cues]), u""
 
 
 def _is_bitmap(codec):
@@ -842,6 +855,23 @@ def measure(video_path, subtitle_path, reference):
 
     fit = align(unique_starts(reference.starts), unique_starts(starts),
                 reference.duration)
+    # ⭐ 0.1.12: a cut file's break, placed by the lines' own ends inside the
+    # span `fit()` left it in. Without this the lines between the earliest tie
+    # and the real break take the other segment's offset -- or, on a negative
+    # jump, are dropped (`align.place_breaks` has the measurement).
+    spans = getattr(reference, "spans", None)
+    if fit.is_cut and spans:
+        fit = place_breaks(fit, spans, [(c.start, c.end) for c in parsed.cues])
+    # 🚨 AND A SHIFT INSIDE THE ALIGNER'S OWN RESOLUTION IS ZERO, or a cut
+    # file never converges. Each segment's offset is a plateau centre on a
+    # `REFINE_STEP` grid anchored wherever the histogram peaked, so our own
+    # two-segment output, weighed again as ONE segment, measures +0.008 s, is
+    # rewritten, then -0.010 s, rewritten again (yomi18, found by
+    # `test_e2e`'s third run once 0.1.12 stopped dropping a line and the output
+    # began to win rule 5). Below half a frame; every tolerance is 0.10 s+.
+    if (not fit.is_cut
+            and 0.0 < abs(fit.segments[0][1]) <= SETTLED_SHIFT):
+        fit.segments = [(None, 0.0)]
     return _Measured(video_path, subtitle_path, fit=fit, sidecar=sidecar,
                      cue_count=len(parsed.cues), content_end=content_end,
                      reference=reference)
@@ -2250,6 +2280,7 @@ def _result_for(video_path, m, outcome, reason, report=None, superseded=(),
         video_path, m.subtitle, outcome,
         reason=reason,
         segments=(v.segments if v is not None else ()),
+        undetermined=(v.undetermined if v is not None else ()),
         match_rate=(v.match_rate if v is not None else 0.0),
         excess_over_chance=(v.excess if v is not None else 0.0),
         raw_excess=(v.raw_excess if v is not None else 0.0),

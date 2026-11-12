@@ -696,3 +696,162 @@ def fit(R, A, duration=None, window=WINDOW, max_segments=None):
                n, len(A), gaps)
 
 
+
+
+# --------------------------------------------------------------------------
+# placing a break inside its span -- by the lines' own extents (0.1.12)
+# --------------------------------------------------------------------------
+
+#: Reference seconds read either side of a break's span when placing it.
+PLACE_CONTEXT = 30.0
+#: Overlap by which two placements may differ and still tie: half of one line.
+#: A line contributes at most 1.0 (a perfect overlap), so this is the same
+#: small-sample argument `TIE_SLACK` makes for one cue's start.
+PLACE_SLACK = 0.5
+
+
+def _line_overlap(r0, r1, p0, p1):
+    u"""Overlap of reference lines (rows) with placed lines (columns), as the
+    fraction of their union. Zero where they do not meet."""
+    inter = np.minimum(r1[:, None], p1[None, :]) - np.maximum(r0[:, None], p0[None, :])
+    union = np.maximum(r1[:, None], p1[None, :]) - np.minimum(r0[:, None], p0[None, :])
+    out = np.zeros(inter.shape)
+    ok = (inter > 0) & (union > 0)
+    out[ok] = inter[ok] / union[ok]
+    return out
+
+
+def _fates(starts, t, o1, o2):
+    u"""Per subtitle line, for a break at reference time `t`: 1 (the first
+    segment's offset), 2 (the second's) or 0 (dropped: inside the stretch a
+    NEGATIVE jump removes, `removed_spans`). Exactly what the writer does."""
+    fate = np.where(starts < t - o1, 1, 2)
+    if o2 < o1:
+        fate[(starts >= t - o1) & (starts < t - o2)] = 0
+    return fate
+
+
+def _place_one(ref, sub, lo, hi, o1, o2, floor, ceil):
+    u"""One break. -> (split, lo, hi), or None when the lines cannot tell."""
+    a = lo - PLACE_CONTEXT if floor is None else max(lo - PLACE_CONTEXT, floor)
+    b = hi + PLACE_CONTEXT if ceil is None else min(hi + PLACE_CONTEXT, ceil)
+    r = ref[(ref[:, 0] >= a) & (ref[:, 0] <= b)]
+    s = sub[(sub[:, 0] + o1 >= a) & (sub[:, 0] + o2 <= b)]
+    if len(r) == 0 or len(s) == 0:
+        return None
+    m1 = _line_overlap(r[:, 0], r[:, 1], s[:, 0] + o1, s[:, 1] + o1)
+    m2 = _line_overlap(r[:, 0], r[:, 1], s[:, 0] + o2, s[:, 1] + o2)
+    # Where a line changes side: at `start + o1`, and -- only where a negative
+    # jump drops lines -- again at `start + o2`, leaving the removed stretch.
+    moves = s[:, 0] + o1
+    if o2 < o1:
+        moves = np.concatenate([moves, s[:, 0] + o2])
+    edges = np.unique(np.concatenate([[lo, hi], moves[(moves > lo) & (moves < hi)]]))
+    # 🚨 SCORE BETWEEN THE EDGES, NEVER ON ONE. An edge is where a line changes
+    # side, and on it the answer is round-off: placed at exactly `start + o2`,
+    # yomi18's `あ～あ… 感電して` came out 3e-14 s inside the removed stretch
+    # and was dropped from the written file. A midpoint writes the same as any
+    # other point between the same two edges.
+    cuts = (edges[:-1] + edges[1:]) / 2.0 if len(edges) > 1 else edges
+    scores, drops = [], []
+    for t in cuts:
+        fate = _fates(s[:, 0], t, o1, o2)
+        m = np.where(fate[None, :] == 1, m1, np.where(fate[None, :] == 2, m2, 0.0))
+        # ⭐ Each REFERENCE line counts once, at its best match. Scored from the
+        # subtitle's side instead, a line moved ten seconds lands on SOME
+        # reference line in a dense scene and scores nearly as well as on its
+        # own: measured on Re:Zero 53 against its video, 0.74 against 0.77.
+        scores.append(float(m.max(axis=1).sum()))
+        drops.append(int((fate == 0).sum()))
+    scores = np.array(scores)
+    if scores.max() <= 0:
+        return None
+    tie = np.flatnonzero(scores >= scores.max() - PLACE_SLACK)
+    # ⛔ A dropped line is gone from the written file, so among placements the
+    # lines cannot tell apart, the one dropping fewest wins -- then the
+    # earliest, which is `_boundary_time`'s convention.
+    fewest = min(drops[i] for i in tie)
+    keep = [i for i in tie if drops[i] == fewest]
+    first, last = float(cuts[keep[0]]), float(cuts[keep[-1]])
+    # The span: from the end of the last line SURELY before the break to the
+    # start of the first line SURELY after it, across every tied placement.
+    f_first, f_last = _fates(s[:, 0], first, o1, o2), _fates(s[:, 0], last, o1, o2)
+    before = s[f_first == 1, 1] + o1
+    after = s[f_last == 2, 0] + o2
+    a = float(before.max()) if before.size else lo
+    b = float(after.min()) if after.size else hi
+    span_lo = max(lo, min(a, b, first))
+    span_hi = min(hi, max(a, b, first))
+    return first, span_lo, span_hi
+
+
+def _in_order(segments):
+    u"""Are the splits strictly increasing, in reference AND subtitle time?"""
+    splits = [s for s, _o in segments[:-1]]
+    bounds = [s - o for s, o in segments[:-1]]
+    return (all(a < b for a, b in zip(splits, splits[1:]))
+            and all(a <= b for a, b in zip(bounds, bounds[1:])))
+
+
+def place_breaks(fit, ref_spans, sub_spans):
+    u"""Re-place each break of a cut fit by the lines' extents. -> Fit
+
+    `ref_spans` and `sub_spans` are `(start, end)` per line, reference and
+    subtitle. A fit with one segment, or lines with no extent, come back
+    unchanged -- the same object.
+
+    🚨 WHY: THE EARLIEST TIE IS WRONG FOR THE LINES INSIDE THE SPAN. `fit()`
+    knows where a break lies only to within `gaps` -- every cut position in it
+    scores within `TIE_SLACK` on cue STARTS -- and reports the earliest. The
+    lines between that point and the real break then take the other segment's
+    offset, and on a NEGATIVE jump the ten seconds after it are DROPPED as a
+    removed stretch (`removed_spans`). Measured on 11 real cut pairs (the
+    oracle's 9 and yomi18's 2): of 66 lines inside a span whose right offset
+    can be read from their words, the earliest tie gives 25 the wrong one and
+    13 of those are deleted from the written file. Field report: Re:Zero
+    S04E18, a card cut from a line in the span played the next scene
+    (Tsubasa-sync #2).
+
+    ⭐ A LINE'S END IS THE SECOND MEASUREMENT `fit()` NEVER USES. Scored by how
+    well every reference line is covered by the placed lines (start AND end),
+    the same 66 come out 64 right, none dropped, and the two still wrong start
+    inside the span this returns. The span itself shrinks to the stretch
+    between the last line surely before the break and the first surely after
+    it -- usually the opening song's silence, with no line in it.
+
+    ⛔ The split never leaves the span `fit()` reported, so every guard and the
+    offsets stand as `fit()` found them. Only `segments`' split times and
+    `gaps` change; costs ~1-2 ms per break, nothing for an uncut file.
+    """
+    if not fit.is_cut or not fit.gaps or len(fit.gaps) != len(fit.segments) - 1:
+        return fit
+    ref = np.asarray([(float(s), max(float(s), float(e))) for s, e in ref_spans],
+                     dtype=float).reshape(-1, 2)
+    sub = np.asarray([(float(s), max(float(s), float(e))) for s, e in sub_spans],
+                     dtype=float).reshape(-1, 2)
+    if len(ref) == 0 or len(sub) == 0:
+        return fit
+    segments, gaps = list(fit.segments), list(fit.gaps)
+    for i in range(len(gaps)):
+        lo, hi = gaps[i]
+        o1, o2 = segments[i][1], segments[i + 1][1]
+        floor = gaps[i - 1][1] if i > 0 else None
+        ceil = gaps[i + 1][0] if i + 1 < len(gaps) else None
+        placed = _place_one(ref, sub, lo, hi, o1, o2, floor, ceil)
+        if placed is None:
+            continue
+        split, nlo, nhi = placed
+        trial = segments[:i] + [(split, o1)] + segments[i + 1:]
+        # ⛔ NEVER OUT OF ORDER. Each break is placed inside its OWN span, and two
+        # spans may overlap, or opposite jumps may cross in subtitle time -- an
+        # adversarial fuzz put 245 of 4,000 multi-break fits out of order, and
+        # `mapper_for` then gives a middle segment nothing. Such a break stays
+        # where `fit()` put it.
+        if _in_order(segments) and not _in_order(trial):
+            continue
+        segments = trial
+        gaps[i] = (nlo, nhi)
+    if segments == list(fit.segments) and gaps == list(fit.gaps):
+        return fit
+    return Fit(segments, fit.score, fit.chance, fit.single, fit.buckets,
+               fit.failing, fit.candidates, fit.n_ref, fit.n_sub, gaps)

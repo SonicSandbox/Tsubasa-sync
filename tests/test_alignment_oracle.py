@@ -43,7 +43,10 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tsubasa.align import MR_TOL, align, unique_starts   # noqa: E402
+import re                                                 # noqa: E402
+
+from tsubasa.align import (MR_TOL, align, mapper_for, place_breaks,  # noqa: E402
+                           removed_spans, unique_starts)
 from tsubasa.paths import load_config, oracle_root       # noqa: E402
 
 
@@ -268,3 +271,120 @@ def test_the_pairs_the_oracle_says_to_refuse_score_low(oracle):
             "%s vs %s scored %.2fx and would be ACCEPTED -- %s"
             % (sk, vk, fit.excess, why))
     assert checked >= 4, "only %d refusal pairs were checked" % checked
+
+
+
+# --------------------------------------------------------------------------
+# ⭐ 0.1.12 -- the breaks PLACED by the lines' own extents (`place_breaks`)
+# --------------------------------------------------------------------------
+
+def _placed(S, ref, sub):
+    R, fit = _fit(S, ref, sub)
+    return R, place_breaks(fit, [(c[0], c[1]) for c in ref],
+                           [(c[0], c[1]) for c in sub])
+
+
+def test_placed_breaks_keep_the_offsets_and_stay_inside_fits_own_span(oracle):
+    u"""Placing a break may move it only inside the span `fit()` declared, and
+    must leave every offset and every cue OUTSIDE that span as `fit()` had it.
+
+    🚨 THE TRUTH'S SPLIT TIMES DO NOT JUDGE A CUE INSIDE THAT SPAN, and this
+    is measured, not assumed. The corpus calls them loose (*"accepted anywhere
+    inside the quiet gap"*) and they sit at the earliest tie: Re:Zero 53's
+    `rezero53_atx vs rezero53_netflix` records 63.0, yet its reference line at
+    63.46 (`ご高説 ありがとう`) is the subtitle's line under the FIRST offset;
+    against the video it records 65.0 while 65.71 (*"Now burn to a crisp"*) is
+    `とっとと焼けて`, first offset too. Inside the span the next check judges by
+    the lines' WORDS instead."""
+    S, _C, _m, _v = oracle
+    bad = []
+    for label, ref, sub, truth, tol in _pairs(oracle):
+        R, early = _fit(S, ref, sub)
+        _R, fit = _placed(S, ref, sub)
+        if len(fit.segments) != len(truth):
+            bad.append("%s: %d segments" % (label, len(fit.segments)))
+            continue
+        for (_gs, got), (_ts, want) in zip(fit.segments, truth):
+            if abs(got - want) > tol:
+                bad.append("%s: offset %+.3f vs %+.3f" % (label, got, want))
+        wrong = [t for t in R if not early.undetermined(t)
+                 and abs(_offset_at(fit.segments, t) - _offset_at(truth, t)) > MR_TOL]
+        if wrong:
+            bad.append("%s: %d cues wrong outside fit()'s span" % (label, len(wrong)))
+        for (split, _o), (a, b), (lo, hi) in zip(fit.segments, fit.gaps,
+                                                 early.gaps):
+            if not lo - 1e-6 <= a <= split <= b <= hi + 1e-6:
+                bad.append("%s: placed %.1f in %.1f-%.1f, outside fit()'s "
+                           "%.1f-%.1f" % (label, split, a, b, lo, hi))
+    assert not bad, "\n  ".join(bad)
+
+
+def _words(text):
+    t = re.sub(r"\{[^}]*\}", "", text)
+    t = re.sub(u"[（(][^）)]*[）)]", "", t)
+    t = re.sub(u"[\\s　…・･、。！？!?「」『』～♪〜➨➡\\-]", "", t)
+    return set(t[i:i + 2] for i in range(len(t) - 1))
+
+
+def _says(line, ref, offset):
+    u"""How well `line`, shifted by `offset`, says the words of a reference
+    line it overlaps (bigram Dice; 0 when it meets none)."""
+    w = _words(line[3])
+    best = 0.0
+    for r in ref:
+        if r[0] < line[1] + offset + 1.5 and r[1] > line[0] + offset - 1.5:
+            v = _words(r[3])
+            if w and v:
+                best = max(best, 2.0 * len(w & v) / (len(w) + len(v)))
+    return best
+
+
+def test_a_placed_break_gives_every_line_the_offset_its_WORDS_say(oracle):
+    u"""🚨 THE LINES `fit()` LEAVES INSIDE ITS SPAN, CHECKED BY WHAT THEY SAY.
+    The claims above stop at the span's edge; this looks inside it. On the
+    oracle's same-language cut pairs a line whose words match a reference line
+    under exactly one of the two offsets HAS that offset -- a judge
+    `place_breaks` never sees, since it reads only times. A line still wrong
+    must start inside the span the placed fit declares, and no such line may
+    be dropped. Measured (0.1.12) on these four pairs: 44 lines have words to
+    judge by; the earliest tie gives 9 the wrong offset; placed, 42 are right
+    and the two left start inside the span."""
+    S, C, mega, _v = oracle
+    checked, held, bad = 0, 0, []
+    for (rk, sk), (truth, _tol) in sorted(C.TRUTH_SUB_VS_SUB.items()):
+        if len(truth) < 2:
+            continue
+        ref = S.parse_cues(str(mega / C.SUBS[rk]))
+        sub = S.parse_cues(str(mega / C.SUBS[sk]))
+        _R, early = _fit(S, ref, sub)
+        _R, fit = _placed(S, ref, sub)
+        mapper, gone = mapper_for(fit.segments), removed_spans(fit.segments)
+        for i, (lo, hi) in enumerate(early.gaps):
+            o1, o2 = early.segments[i][1], early.segments[i + 1][1]
+            for line in sub:
+                if not min(lo - o1, lo - o2) <= line[0] < max(hi - o1, hi - o2):
+                    continue
+                s1, s2 = _says(line, ref, o1), _says(line, ref, o2)
+                want = o1 if s1 >= 0.4 > 0.25 > s2 else (
+                    o2 if s2 >= 0.4 > 0.25 > s1 else None)
+                if want is None:
+                    continue
+                checked += 1
+                if any(a <= line[0] < b for a, b in gone):
+                    bad.append("%s vs %s: %.2f DROPPED" % (rk, sk, line[0]))
+                    continue
+                at = mapper(line[0])
+                if abs((at - line[0]) - want) <= 1e-6:
+                    continue
+                held += 1
+                if not fit.undetermined(at):
+                    bad.append("%s vs %s: %.2f written at %.2f, its words say "
+                               "%+.2f" % (rk, sk, line[0], at, want))
+    assert checked >= 20, "only %d lines had words to judge by" % checked
+    assert not bad, "\n  ".join(bad)
+    # ⛔ AND THE SPAN MAY NOT BUY THE PASS. Left at `fit()`'s span, the 9 wrong
+    # lines all start inside it and the check above is green over a placement
+    # that did nothing. Measured: 2 of 44 are left wrong (and flagged).
+    assert held <= checked // 10, (
+        "%d of %d lines with words to judge by still take the wrong offset, "
+        "flagged or not" % (held, checked))
