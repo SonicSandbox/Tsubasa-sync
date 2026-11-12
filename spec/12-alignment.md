@@ -134,6 +134,38 @@ one segment at the right offset, no phantom break.**
 | **Sub-tolerance estimator** | On 3 identical-source pairs the estimate sat 0.20–0.21 s from truth, just outside the corpus's 0.20 s tolerance | ⭐ **`D3b` resolved, and the median turned out to be the wrong tool entirely.** The ruling's spirit — plateau centre — was right; the diagnosis was not. **A histogram bin counts every (reference, subtitle) PAIR whose difference falls in it; the objective counts every reference CUE that finds a neighbour, at most once.** Where a cue has two subtitle cues inside the tolerance the histogram counts both and its peak drifts. So the histogram FINDS the peak and the **real objective sets the value**, on a ±0.6 s grid at 0.01 s, plateau-centred. That is subsync's own estimator, which is what the truth was measured with. It costs ~120 evaluations against a ±120 s search, so the accuracy is free — and it took offsets from 26/29 to **29/29** |
 | **Tie-break between equal candidates** | none seen; specified for completeness | prefer the candidate closer to zero, then the one with more supporting differences |
 
+### 🚨 3.5a AMENDED BY MEASUREMENT AT 0.1.12 — the earliest tie is the wrong POINT for the lines inside the span
+
+**Field report (Tsubasa-sync #2, Mattias, 2026-11-11):** Re:Zero S04E18, a Netflix subtitle on the AT-X
+broadcast — the break reported at 158.86 s, the real one ~190 s, eight lines retimed ~10 s late, and a
+Surasura card cut from one of them played the next scene. ⭐ **The sentence above, *"every cut position
+across that silence assigns every CUE the same offset"*, is true of the reference's cue STARTS and false of
+the subtitle's LINES**: the span is a tie *within one hit*, and the subtitle's lines between the earliest tie
+and the real break take the other segment's offset. On a **negative** jump it is worse — `removed_spans`
+drops the ten seconds after the split, so those lines are **deleted from the written file**.
+
+| Measured on 11 real cut pairs (the oracle's 9 + yomi18's 2) | lines in a span whose offset their WORDS decide | wrong offset | of which DROPPED |
+| --- | --- | --- | --- |
+| the earliest tie (0.1.11) | 66 | **25** | **13** |
+| ⭐ `align.place_breaks` (0.1.12) | 66 | **2** — both start inside the span it returns | **0** |
+
+⭐ **The fix is the line's END, the measurement `fit()` never uses.** Inside `fit()`'s span only, each
+placement is scored by how well every **reference** line is covered by the placed subtitle lines (overlap
+over union, start and end; a reference line counts **once**, at its best — scored per subtitle line, a line
+moved ten seconds in a dense scene lands on *some* line and scores 0.74 against its own 0.77). Ties within
+`PLACE_SLACK = 0.5` (half a line) go to the placement that **drops fewest lines**, then the earliest; the
+point is a midpoint between two places a line changes side (on one, round-off dropped yomi18's
+`あ～あ… 感電して`). The span becomes the stretch from the end of the last line surely before the break to
+the start of the first surely after — usually the opening song's silence, with no line in it. ⛔ The split
+never leaves `fit()`'s span and no offset changes; `align()` is untouched. Cost ~1–2 ms a break, nothing for
+an uncut file. ⚠ **The oracle's recorded split TIMES are earliest ties too** (Re:Zero 53 vs Netflix records
+63.0 while its reference line at 63.46, `ご高説 ありがとう`, is the subtitle's under the FIRST offset), so inside
+`fit()`'s span the suite judges lines by their words, never by those numbers.
+
+⚠ **Audio was the other candidate and was measured out:** ~0.2 s only to decode a two-minute span, and an
+opening song cannot be told from speech without a model (a new dependency) — while the reference's caption
+lines already are the speech record. It belongs to B6, the mask path, where there are no caption lines.
+
 ### 3.6 🚨 The measurability floor — found by the negative controls
 
 **A subtitle containing ONE cue scored 5.15× chance against a real reference.** The

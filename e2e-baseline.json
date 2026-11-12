@@ -1,11 +1,11 @@
 {
   "broadcast_cut": {
     "nanakoraws.atx.cut.srt": {
-      "dropped_in_gap": 1,
+      "dropped_in_gap": 0,
       "outcome": "CONFIDENT",
       "segments": [
         [
-          222.4,
+          272.54,
           0.407
         ],
         [
@@ -16,17 +16,17 @@
       "source_untouched": true,
       "undetermined_spans": [
         [
-          222.4,
-          336.34
+          228.4,
+          322.19
         ]
       ]
     },
     "shincaps.atx.cut.srt": {
-      "dropped_in_gap": 1,
+      "dropped_in_gap": 0,
       "outcome": "CONFIDENT",
       "segments": [
         [
-          222.4,
+          272.53,
           -32.831
         ],
         [
@@ -37,8 +37,8 @@
       "source_untouched": true,
       "undetermined_spans": [
         [
-          222.4,
-          336.34
+          228.4,
+          322.18
         ]
       ]
     }

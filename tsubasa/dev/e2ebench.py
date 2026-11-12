@@ -186,6 +186,15 @@ CUT_TRUTH = {"break": 222.0, "first": 0.400, "second": -9.825}
 #: positions and ±1.0 would admit one, making it an identity test dressed as a
 #: tolerance.
 CUT_BREAK_TOLERANCE = 5.0
+#: 🚨 AND `CUT_TRUTH["break"]` IS SUBSYNC'S EARLIEST TIE, NOT WHERE THE BREAK
+#: IS -- 0.1.12 measured it. Read off the reference's own lines: the last line
+#: both releases say before the opening song is `どうすれば この か弱いアサや…`
+#: = *"How can we protect helpless little Asa"* (222.40-227.76, matched only
+#: under the FIRST offset), and the first after it is `あ～あ… 感電して…` =
+#: *"Aw, man."* (322.29, only under the second). So the break lies in this
+#: silence, and a split at 222 drops that line as a removed stretch -- which
+#: 0.1.11 did (`dropped_in_gap` 1). Reference seconds.
+CUT_SILENCE = (227.76, 322.29)
 #: ⚠ Measured worst deviation is **0.0455 s**, so this is 2.2× headroom — snug,
 #: and named as snug rather than described as generous.
 CUT_OFFSET_TOLERANCE = 0.100
@@ -832,8 +841,11 @@ def scenario_broadcast_cut(root, mat):
                                                else [])],
             "break_at": (result.segments[0][0]
                          if result and result.segments else None),
-            # ⚠ The span the tool says the break is somewhere inside.
-            "undetermined_spans": [list(g) for g in (fit.gaps or [])],
+            # ⚠ The span the tool says the break is somewhere inside. ⭐ Since
+            # 0.1.12 the PRODUCT's own claim (`Result.undetermined`, after
+            # `place_breaks`), not a bare `align()` beside it.
+            "undetermined_spans": [list(g) for g in (
+                result.undetermined if result else (fit.gaps or []))],
             "dropped_in_gap": result.dropped_in_gap if result else None,
             "outcome": result.outcome if result else None,
             "wrote_a_file": bool(written),

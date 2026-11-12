@@ -20,7 +20,8 @@ media present -- and it is why the same function serves a text track, a bitmap
 track's ON-times and a speech mask without knowing which it was given.
 """
 from .fit import (BIN, K_BUCKET, K_GLOBAL, Fit, candidates, differences, fit,
-                  is_removed, mapper_for, removed_spans, subtitle_boundaries)
+                  is_removed, mapper_for, place_breaks, removed_spans,
+                  subtitle_boundaries)
 from .objective import (BUCKET, CLUSTER_TOL, MAX_BREAK, MIN_ALIGNABLE_CUES,
                         MIN_BREAK, MIN_CUES,
                         MIN_EXCESS, MIN_LOCAL_MARGIN, MIN_SPLIT_GAIN, MR_TOL,
@@ -47,4 +48,6 @@ __all__ = [
     # ⭐ 3a's write path works from `segments` alone -- a `Verdict` carries
     # them, so the writer never needs a whole `Fit`.
     "subtitle_boundaries", "mapper_for", "removed_spans", "is_removed",
+    # ⭐ 0.1.12: a cut fit's breaks re-placed by the lines' own extents.
+    "place_breaks",
 ]

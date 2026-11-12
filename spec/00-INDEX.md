@@ -25,7 +25,7 @@ which stays in place, untouched, as the reference implementation and the oracle.
 | --- | --- | --- |
 | **1** | **The embedded subtitle track is an ACCELERATOR, never a dependency.** So are the alias table and the native container reader. | *"Most cases will have an existing subtitle, but that can't be the crutch."* A design that assumes any of them is present fails the objective |
 | **2** | **A confidently wrong answer is worse than no answer.** Refusal with a stated reason is a feature. | Every threshold in this pack sits in a **measured empty band**. A threshold set by taste breaks the whole value proposition. On 2026-09-08 this rule *refused two broadcast cuts on a speech mask* rather than guess — that is it working |
-| **3** | ⛔ **No media, no corpora, no downloaded programs inside TheForge.** | The vault auto-commits. Media lives in `InfiniteVoid/WorldDominationLite/tsubasa-corpus/`. See `LEDGER-HOT.md` |
+| **3** | ⛔ **No media, no corpora, no downloaded programs inside TheForge.** | The vault auto-commits. Media lives in `C:\Sonic\AppData\tsubasa\corpus\` (since 2026-10-14; was `InfiniteVoid/WorldDominationLite/tsubasa-corpus/`). See `LEDGER-HOT.md` |
 | **4** | ⭐ **Ask the efficiency question at EVERY level.** See below | Asked five times now; answered by measurement five times; guessed wrong every time it was guessed |
 
 ---

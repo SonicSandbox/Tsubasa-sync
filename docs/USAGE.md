@@ -191,6 +191,7 @@ print(report.summary())    # "1 refused · 23 synced" — anything needing atten
 | `video` · `subtitle` | the paths. ⚠ `subtitle` is `None` when the video itself could not be read, so no subtitle was tried |
 | `offset` | seconds to add to the subtitle's times. A file with a cut has more than one — see `segments` |
 | `segments` | `[(until, offset), ...]`: each offset applies up to `until` on the corrected clock; the last `until` is `None`, meaning to the end |
+| `undetermined` | for a file with a cut, per break: `(lo, hi)` on the corrected clock, the stretch the break lies somewhere inside — usually the silence between two lines. A line written to start strictly inside it, or inside it moved by the jump (`lo + d` to `hi + d`, `d` being the next offset minus this one), may sit on the wrong side of the break. Empty for one segment |
 | `match_percent` · `verdict_word` | how well the timing agreed, and the word for it |
 | `output_path` | the file written — set only when one actually was |
 | `superseded` | files that went to the trash |

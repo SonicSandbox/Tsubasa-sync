@@ -475,6 +475,7 @@ def as_json(result):
         u"outcome": result.outcome,
         u"reason": result.reason,
         u"segments": [[s, o] for s, o in result.segments],
+        u"undetermined": [[lo, hi] for lo, hi in result.undetermined],
         u"offset": result.offset,
         u"match_rate": result.match_rate,
         u"match_percent": result.match_percent,

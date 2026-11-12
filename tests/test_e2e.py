@@ -348,16 +348,19 @@ def test_a_real_broadcast_cut_is_SOLVED_and_lands_on_the_MEASURED_offsets(
     assert abs(second - E.CUT_TRUTH["second"]) <= E.CUT_OFFSET_TOLERANCE, (
         "second segment %+.4f against a measured %+.3f"
         % (second, E.CUT_TRUTH["second"]))
-    assert abs(at - E.CUT_TRUTH["break"]) <= E.CUT_BREAK_TOLERANCE, (
-        "the break landed at %.1f s; the truth puts it at %.0f s"
-        % (at, E.CUT_TRUTH["break"]))
-    # ⭐ AND THE TRUTH'S BREAK IS INSIDE THE SPAN THE TOOL DISCLAIMS, which is
-    # the honest form of the claim and survives the aligner getting better at
-    # narrowing it.
+    # 🚨 0.1.12: THE BREAK IS IN THE SILENCE THE LINES BOUND, not within 5 s
+    # of subsync's 222 -- that is the earliest tie, and a split there drops the
+    # line the reference renders at 222.40 (`E.CUT_SILENCE` has the lines).
+    lo, hi = E.CUT_SILENCE
+    assert lo <= at <= hi, (
+        "the break landed at %.1f s, outside the silence %.2f-%.2f the "
+        "reference's own lines bound" % (at, lo, hi))
+    # ⭐ AND THE SPAN THE TOOL DISCLAIMS LIES INSIDE THAT SILENCE, give or take
+    # a line's edge: the honest form of the claim, and no line is in it.
     spans = cell["undetermined_spans"]
     assert spans, "the tool reported no undetermined span at all"
-    assert any(a - E.CUT_BREAK_TOLERANCE <= E.CUT_TRUTH["break"] <= b
-               for a, b in spans), (E.CUT_TRUTH["break"], spans)
+    assert any(lo - 1.0 <= a and b <= hi + 1.0 for a, b in spans), (
+        E.CUT_SILENCE, spans)
 
 
 def test_the_split_search_finds_the_SAME_break_under_a_DIFFERENT_offset(
@@ -390,8 +393,16 @@ def test_the_split_search_finds_the_SAME_break_under_a_DIFFERENT_offset(
         a["segments"], b["segments"])
 
 
-def test_D9_drops_the_stranded_cue_and_the_file_still_PARSES(measured):
-    u"""⭐ `D9`: cues inside a removed stretch are dropped, counted, reported.
+def test_D9_drops_NO_SPOKEN_LINE_at_a_placed_break_and_the_file_still_PARSES(
+        measured):
+    u"""⭐ `D9`: cues inside a removed stretch are dropped, counted, reported --
+    and since 0.1.12 the stretch sits in the silence the lines bound.
+
+    🚨 UNTIL 0.1.12 THIS ASSERTED ONE DROP, AND THE DROP WAS A REAL LINE.
+    The split sat at the earliest tie (222.4), so the removed ten seconds began
+    on `どうすれば この か弱いアサや…`, which the reference renders at 222.40
+    (*"How can we protect helpless little Asa"*). `align.place_breaks` puts the
+    break in the opening song's silence, and nothing in it is spoken.
 
     ⚠ AND THE LOOP IS REQUIRED TO HAVE RUN. `LEDGER-HOT.md`: *loop over
     literals and assert the loop ran.* Without the length assertion an empty
@@ -402,9 +413,9 @@ def test_D9_drops_the_stranded_cue_and_the_file_still_PARSES(measured):
     assert sorted(cuts) == [u"nanakoraws.atx.cut.srt",
                             u"shincaps.atx.cut.srt"], sorted(cuts)
     for staged, cell in sorted(cuts.items()):
-        assert cell["dropped_in_gap"] == 1, (staged, cell["dropped_in_gap"])
+        assert cell["dropped_in_gap"] == 0, (staged, cell["dropped_in_gap"])
         assert cell["written_cues"] is not None, staged
-        assert cell["written_cues"] == cell["source_cues"] - 1, (
+        assert cell["written_cues"] == cell["source_cues"], (
             "%s: %d source cues, %d written, %d reported dropped"
             % (staged, cell["source_cues"], cell["written_cues"],
                cell["dropped_in_gap"]))

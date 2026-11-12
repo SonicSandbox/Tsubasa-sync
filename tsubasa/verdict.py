@@ -176,12 +176,13 @@ class Verdict(object):
 
     __slots__ = ("outcome", "reason", "word", "match_rate", "excess",
                  "raw_excess", "band", "reference_kind", "segments",
-                 "holds_throughout", "runtime_check", "failing", "lifted_by")
+                 "holds_throughout", "runtime_check", "failing", "lifted_by",
+                 "undetermined")
 
     def __init__(self, outcome, reason, word=None, match_rate=0.0, excess=0.0,
                  raw_excess=0.0, band=None, reference_kind=TEXT_TRACK,
                  segments=(), holds_throughout=True, runtime_check=u"absent",
-                 failing=(), lifted_by=None):
+                 failing=(), lifted_by=None, undetermined=()):
         if outcome not in OUTCOMES:
             raise ValueError(
                 "outcome %r is not one of %s (05-interface.md). An "
@@ -232,6 +233,12 @@ class Verdict(object):
         self.failing = list(failing)
         #: What lifted this out of the escalation band, if anything did.
         self.lifted_by = lifted_by
+        #: `Fit.gaps`: per boundary, `(lo, hi)` in REFERENCE (video) time, the
+        #: stretch the break lies somewhere inside. ⚠ `segments[i][0]` is one
+        #: point of it, so a line retimed to start inside it may carry the
+        #: other segment's offset. Empty for one segment. (0.1.12, from
+        #: Tsubasa-sync #2.)
+        self.undetermined = [(float(lo), float(hi)) for lo, hi in undetermined]
 
     @property
     def written(self):
@@ -304,6 +311,7 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
         "holds_throughout": bool(fit.holds_throughout),
         "runtime_check": _runtime_check(fit),
         "failing": list(fit.failing),
+        "undetermined": list(getattr(fit, "gaps", None) or ()),
     }
 
     # 1 -- was there enough input to measure? ERROR is "not measured", never

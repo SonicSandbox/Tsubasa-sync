@@ -1010,3 +1010,31 @@ def test_a_real_CUT_file_is_written_WITH_its_segments(oracle):
     assert len(v.segments) > 1, (
         "the cut file resolved to one segment, so this check is not looking "
         "at what it claims to")
+
+
+# --- `undetermined`: the span a cut file's break lies in, carried out --------
+# 0.1.12. Based on Tsubasa-sync #2 by Mattias: Surasura 3.0.2 on Re:Zero S04E18
+# (a Netflix subtitle on the AT-X broadcast) reported the break at 158.86 s,
+# the lines up to ~190 s took the second segment's +8.7 s, and a card cut from
+# one of them played the next scene. `Fit.gaps` knew the span; nothing said it.
+
+def test_a_cut_verdict_carries_the_span_its_break_lies_in():
+    fit = make_fit(segments=((158.86, -1.308), (None, 8.726)))
+    fit.gaps = [(158.86, 214.85)]
+    v = V.verdict(fit)
+    assert v.segments[0][0] == 158.86
+    assert v.undetermined == [(158.86, 214.85)]
+
+
+def test_a_one_segment_verdict_carries_no_span():
+    assert V.verdict(make_fit()).undetermined == []
+
+
+def test_the_span_rides_every_outcome_the_fit_reaches():
+    u"""A refused or held-back cut file still names its span: a person reading
+    why it was refused needs it as much as a writer does."""
+    fit = make_fit(excess=1.2, segments=((60.0, -0.2), (None, 9.7)))
+    fit.gaps = [(60.0, 165.7)]
+    v = V.verdict(fit)
+    assert v.outcome != V.CONFIDENT
+    assert v.undetermined == [(60.0, 165.7)]
