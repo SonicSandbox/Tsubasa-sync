@@ -701,32 +701,26 @@ def test_the_escalated_refusal_reports_the_cluster_that_disagreed():
 
 
 # ---------------------------------------------------------------------------
-# the mask band -- UNFITTED, and structurally so
+# the mask band -- FITTED at B6, and still loud if a caller unsets it
 # ---------------------------------------------------------------------------
 
-def test_a_speech_mask_verdict_RAISES_until_B6_fits_its_band():
-    u"""🚨 `12-alignment.md` §5.2. Correct UNCUT pairs measured **2.42-2.77x**
-    on a mask while real broadcast CUTS sat at **1.94x** -- straddling the 2.5
-    cue-vs-cue accept line. Borrowing that line refuses a correct pair,
-    silently.
-
-    ⛔ It raises rather than refuses because this is a TOOLING fault, not a
-    product verdict: a quiet refusal ships a tool that says no to every VAD
-    pair and looks like it is working."""
+def test_an_unset_mask_band_still_RAISES_rather_than_borrowing_the_cue_band(
+        monkeypatch):
+    u"""⛔ A TOOLING fault, not a product verdict: a quiet refusal ships a tool
+    that says no to every VAD pair and looks like it is working. B6 fitted the
+    band; the guard stays for anything that sets it back to None."""
+    monkeypatch.setattr(V, "MASK_BAND", None)
     with pytest.raises(V.MaskBandNotFitted) as e:
         V.verdict(make_fit(excess=2.6), reference_kind=V.SPEECH_MASK)
-    message = str(e.value)
-    assert "B6" in message, message
-    assert "2.42-2.77x" in message, (
-        "the fault must carry the measurement that makes it a fault: %s"
-        % message)
+    assert "B6" in str(e.value)
 
 
-def test_the_mask_band_is_ABSENT_rather_than_a_borrowed_default():
-    u"""⭐ `doctrine/robustness`: a rule that relies on remembering will be
-    forgotten. A comment saying *"fit these at B6"* beside a copied 2.5 is the
-    version of this that does not hold."""
-    assert V.MASK_BAND is None
+def test_the_mask_band_is_FITTED_and_is_not_the_cue_band():
+    u"""⭐ B6 (`12-alignment.md` §5b): `(refuse_below, accept_at)`, fitted on
+    the mask's own population -- never the cue-vs-cue 1.5 / 2.5."""
+    refuse_below, accept_at = V.MASK_BAND
+    assert (refuse_below, accept_at) != (V.REFUSE_BELOW, V.ACCEPT_AT)
+    assert refuse_below < accept_at
 
 
 def test_a_bitmap_track_uses_the_cue_band_unchanged():

@@ -92,17 +92,25 @@ SPEECH_MASK = u"speech mask"
 
 REFERENCE_KINDS = frozenset((TEXT_TRACK, BITMAP_TRACK, SPEECH_MASK))
 
-#: ⛔ UNFITTED, AND STRUCTURALLY SO. `12-alignment.md` §5.2: *"The mask-path
-#: thresholds are fitted separately, with negative controls, before any mask
-#: verdict ships (RUNBOOK B6)."*
+#: ⭐ FITTED AT B6 (2026-11-14), as `(refuse_below, accept_at)`, on Silero
+#: onsets from whisper.cpp's ggml Silero (`speech.py`) against real subtitles
+#: with negative controls -- `12-alignment.md` §5b, the Yomi set + Probe F's
+#: material, ONE offset, `MIN_MASK_ONSETS` met:
 #:
-#: ⭐ It is `None` rather than a comment saying *"fit these at B6"* because
-#: `doctrine/robustness`: **a rule that relies on remembering will be
-#: forgotten.** A borrowed 2.5 would refuse the 2.42x uncut pair that this
-#: project measured as CORRECT, and it would do it silently. When B6 fits the
-#: band this becomes `(refuse_below, accept_at)` and `MaskBandNotFitted`
-#: becomes unreachable -- that is the whole change.
-MASK_BAND = None
+#:     right pairs (8 here + 20 in Tsubasa-sync #4)      2.71-4.75x
+#:     🚨 a real broadcast CUT that holds throughout     2.34x  (shincaps)
+#:     wrong episodes and controls, measurable           <= 1.92x
+#:
+#: ⛔ `accept_at` sits ABOVE THE CUT. #4 fitted 2.2 on its five shows, which
+#: would accept the shincaps AT-X file -- its opening 3:42 ten seconds out --
+#: because on this segmenter its bucket walk passes. Between the cut (2.34)
+#: and the lowest right pair (2.71), 2.6.
+#:
+#: 🚨 TIMING IS NOT ENOUGH ON ITS OWN HERE: a speech-mask pair is CONFIDENT
+#: only when the TEXT WITNESS also passes (`witness.py`), because these bands
+#: rest on a few dozen pairs from eight shows.
+#: ⚠ `MaskBandNotFitted` is kept for a caller that sets this back to None.
+MASK_BAND = (2.0, 2.6)
 
 #: A bitmap track's ON-times are cue moments like any other -- the container
 #: block timestamps that produced them know nothing about the codec -- so the
@@ -156,7 +164,8 @@ LIFTED_WORD = u"uncertain"
 
 
 class MaskBandNotFitted(RuntimeError):
-    u"""A mask verdict was asked for before RUNBOOK B6 fitted its constants.
+    u"""A mask verdict was asked for while `MASK_BAND` is None. B6 fitted it
+    (0.1.13); this is reachable only if a caller sets it back.
 
     🚨 A TOOLING FAULT, NOT A PRODUCT REFUSAL, and it is loud on purpose.
     `doctrine/robustness`: *"a guard that announces a harness/tooling fault is
@@ -265,7 +274,7 @@ class Verdict(object):
 # the front door
 # ---------------------------------------------------------------------------
 
-def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
+def verdict(fit, cluster=None, reference_kind=TEXT_TRACK, witness=None):
     u"""Decide one pair. -> `Verdict`
 
     `fit`
@@ -276,6 +285,11 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
         lift a pair out of it.
     `reference_kind`
         `TEXT_TRACK`, `BITMAP_TRACK` or `SPEECH_MASK`.
+    `witness`
+        ⭐ B6, a speech mask only: the `witness.Witness` text check. A mask
+        pair whose timing reaches the accept band is CONFIDENT only if it
+        passed; ⛔ an absent or unavailable witness REFUSES -- it never
+        waves a pair through on timing alone.
 
     ⛔ THE ORDER OF THESE TESTS IS LOAD-BEARING and it is not the obvious one:
 
@@ -343,6 +357,14 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
         else _mask_band_of(fit.excess, accept_at, refuse_below)
     common["band"] = band
 
+    if band == u"accept" and reference_kind == SPEECH_MASK:
+        if witness is None or not witness.passed:
+            common["band"] = u"escalate"
+            return Verdict(REFUSED, _witness_reason(fit, witness), **common)
+        # ⚠ Capped at `fair`: `strong` and `locked` are floors on the
+        # CUE-VS-CUE excess scale, and a mask's 3x is not a text track's.
+        return Verdict(CONFIDENT, u"", word=u"fair", **common)
+
     if band == u"accept":
         lifted = (vouching is not None and vouching.coheres
                   and fit.excess < accept_at)
@@ -370,6 +392,42 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
                    **common)
 
 
+def mask_would_accept(fit):
+    u"""Would a speech-mask fit be accepted ON TIMING ALONE? -> bool
+
+    ⭐ The pipeline asks before running the text witness, so a pair the timing
+    already refuses never pays for a transcription. ⛔ The same measurable ->
+    holds -> band order as `verdict()`, on the same constants -- not a second
+    copy of the rule with numbers of its own.
+    """
+    if _too_thin(fit) or not fit.measurable or not fit.holds_throughout:
+        return False
+    return fit.excess >= _band_for(SPEECH_MASK)[0]
+
+
+def _witness_reason(fit, witness):
+    u"""A mask pair whose timing passed and whose text check did not."""
+    measured = (u"%d%% of the speech in the audio lines up with this "
+                u"subtitle, %.1f times chance -- enough on timing alone"
+                % (int(round(fit.score * 100)), fit.excess))
+    # ⚠ The advice depends on WHY: "a subtitle for this release will pair"
+    # is true of a subtitle whose words disagreed, and false when the check
+    # could not run at all -- no subtitle passes a check that cannot run.
+    if witness is None:
+        why = (u"but no text check was run, and on a speech mask the timing "
+               u"is not trusted without one")
+        advice = u""
+    elif not witness.available:
+        why = (u"but the text check that has to agree could not run: %s"
+               % witness.reason)
+        advice = u""
+    else:
+        why = u"but %s" % witness.reason
+        advice = u" A subtitle for this exact release will pair;"
+    return (u"%s -- %s. Nothing is written.%s --pair with --force writes this "
+            u"one anyway and says so on the line." % (measured, why, advice))
+
+
 def _own_offset(fit):
     u"""This pair's offset, for comparison against a cluster's consensus.
 
@@ -388,8 +446,8 @@ def _own_offset(fit):
 def _band_for(reference_kind):
     u"""(accept_at, refuse_below) for this kind of reference.
 
-    ⛔ Raises for a speech mask until RUNBOOK B6 fits the mask band. See
-    `MASK_BAND`.
+    ⛔ Raises for a speech mask if `MASK_BAND` is None (B6 fitted it; see
+    there) -- never a borrowed cue-vs-cue band.
     """
     if reference_kind in _CUE_KINDS:
         return ACCEPT_AT, REFUSE_BELOW
@@ -781,7 +839,7 @@ def _clock(seconds):
 __all__ = [
     "CONFIDENT", "REFUSED", "ERROR", "OUTCOMES",
     "TEXT_TRACK", "BITMAP_TRACK", "SPEECH_MASK", "REFERENCE_KINDS",
-    "MASK_BAND", "MaskBandNotFitted",
+    "MASK_BAND", "MaskBandNotFitted", "mask_would_accept",
     "ACCEPT_AT", "REFUSE_BELOW", "LIFTED_WORD",
     "Verdict", "verdict",
 ]
