@@ -310,6 +310,106 @@ calibrated on 60–95% cue-vs-cue rates is out of reach.
 
 ---
 
+## 5b — ⭐ The speech path as BUILT (B6, 2026-11-14) — and where it departs from §5
+
+🚨 **Three departures from the plan above, each made on a measurement and each for Sonic
+to rule on before a release carries it:**
+
+| Planned (§5, RUNBOOK B6) | Built | Why |
+| --- | --- | --- |
+| Silero through **onnxruntime**, built in | Silero through **whisper.cpp's ggml port** (`ggml-silero-v6.2.0.bin`, 885 KB), **found, not bundled** — `$TSUBASA_WHISPER`, `$TSUBASA_VAD_MODEL`, `speech.set_location()`, the cache dir; nothing downloads | **~2.0 s per 24-min episode on a CPU**, against ~21 s in §5. And the same library carries the text witness below |
+| Constants fitted on the Yomi material + Probe F's controls | `MASK_BAND` fitted on **20 right pairs / 182 wrong** from 5 shows (below) | The corpus is not on the machine this was built on. ⛔ **The Yomi + Probe F re-fit on THIS segmenter is still owed**, and `test_speech.py` pins the band inside the population it was fitted on, so a re-fit that moves it shows up as a red check, not a silent edit |
+| One signal: the mask band | **Two:** the mask band **and** a text witness (`witness.py`) | The band was fitted on 5 shows. A second, independent signal is what makes a fit that small defensible under Rule 2 |
+
+### The reference: Silero onsets, never whisper's segment times
+
+Measured on Dr. Stone Stone Wars 04 (no subtitle track; `.ab.srt` external), three
+references against the same subtitle and three wrong episodes:
+
+| Reference | right | wrong (03, 05, 08) |
+| --- | --- | --- |
+| whisper large-v3 segment starts, no VAD (87 s GPU) | 1.21× | 1.24–1.41× |
+| whisper large-v3 + VAD, segment starts (29 s GPU) | 1.90× | 1.46–1.53× |
+| **Silero onsets** (2.0 s CPU) | **3.54×** | **1.41–1.47×** |
+
+⛔ **Whisper's segment times are not a reference.** It emits segments back to back on a
+~1 s grid (478 of 594 exactly 2 s long), so a segment start is the previous segment's end,
+not a moment anyone began speaking. Transcription is used for **what** is said, never
+**when**. Do not re-propose it as the timing source.
+
+### The band and the onset lag
+
+Silero onsets, whisper.cpp defaults (threshold 0.5, min speech 250 ms, min silence 100 ms,
+pad 30 ms):
+
+| Population | n | excess |
+| --- | --- | --- |
+| right — own embedded caption track, **truth 0** (Gachiakuta, Kusuriya S2, Spy×Family S3; 3 each) | 9 | **2.76–3.82×** |
+| right — Dr. Stone Stone Wars 01–11 (`.ab.srt`) | 11 | **2.71–3.73×** |
+| wrong — other episode, same show | 72 + 110 | **≤ 1.73×** |
+| time-reversed / σ 4 s jitter | 2 | 1.38× / 1.30× |
+
+**Empty band 1.73–2.71×. `MASK_BAND = (1.75, 2.2)`** — `accept_at` low in the band on
+purpose, because §5's correct Yomi pair sat at 2.42× on the onnxruntime segmenter; §5's
+broadcast cuts (1.94×) land in the escalation band and are refused (no coherence lift on a
+mask). **One offset only** (`max_segments=1`), per §5 ruling 1.
+
+**`ONSET_LAG = 0.27 s`** is subtracted from every onset: on the 9 truth-0 pairs the fit
+read +0.27 / +0.23 / +0.29 (Gachiakuta), +0.51 / +0.52 / +0.49 (Kusuriya), +0.14 / +0.23 /
++0.27 (Spy×Family) — captions lead the first voiced frame. ⚠ **The residual is per-show,
+−0.13 to +0.25 s after the correction**, measured through the built pipeline. That misses
+§8's *"within 0.15 s of the track-derived truth"* for Kusuriya, and it is reported here
+rather than tuned away.
+
+### The text witness — the second signal
+
+`witness.py`: 10 windows × 30 s spread over the runtime are transcribed (any whisper ggml
+model; measured with `large-v3-q5_0`, language **auto-detected**), and each is compared,
+as character bigrams, with the subtitle's lines at the offset the timing found. A window
+with speech and **no subtitle line** (an opening song, a preview) is `no-sub` and neither
+helps nor hurts; a quiet one is `quiet`. Run only for a pair whose timing already reached
+the accept band (`verdict.mask_would_accept`) — a wrong episode costs ~2 s, not ~10.
+
+Measured through the built code, 9 truth-0 episodes, every wrong pair judged at the
+**right pair's offset** (identical timing — the case the text must settle alone):
+
+| | windows | per window | per pair |
+| --- | --- | --- | --- |
+| right | 73 | min 0.26, p5 0.54 | ≥ 7 of 8 match |
+| wrong | 579 | max 0.20 | **0 windows match, 72 of 72 pairs** |
+
+`MATCH = 0.23` per window (empty band 0.20–0.26), **`MIN_SHARE = 0.75`** of scored
+windows per pair (empty band 0.0–0.875), at least `MIN_SCORED = 4` scored. 🚨 **An
+every-window rule was built first and refused a correct pair** — Gachiakuta 02 at 5:47 is
+shouting that whisper heard as `ブーブー言っmeme…` (26% containment). Windows that miss on a
+passing pair are named on the result.
+
+**A speech-mask pair is CONFIDENT only when both pass, and its word is capped at `fair`**
+(`strong`/`locked` are floors on the cue-vs-cue scale). A witness that could not run —
+no whisper model, a failed decode — **refuses with its reason**; it never waves a pair
+through on timing alone.
+
+### End to end, the built pipeline
+
+| Run | Result |
+| --- | --- |
+| 9 truth-0 episodes, own captions | **9/9 CONFIDENT `fair`**, offsets −0.13 … +0.25 s, ~8–10 s per episode on a first run |
+| same 9, the next episode's captions | **9/9 REFUSED** (1.34–1.59×, on timing alone) |
+| Dr. Stone SW 04, CLI `--vad --pair` | CONFIDENT `fair` at −0.88 s, text 8/8; episode 05's subtitle REFUSED 1.39×; 25 s cold, 0.6 s cached |
+| Dr. Stone SW 01–11, CLI `--vad`, own `.ab.srt` | **11/11 CONFIDENT `fair`**, offsets −0.86 … −0.97 s (the files are ~0.9 s late, consistently); text ≥ 8 of 9 on every episode; 1.1 s for the whole season once cached |
+| Dr. Stone SW, each video with the next episode's `.ab.srt` | **11/11 REFUSED** (1.34–1.50×, on timing alone) |
+
+🚨 **The every-window rule refused three of those eleven** before it was changed — 05 at
+3:21, 07 and 08 at 5:45. At 5:45 a character sings in English; whisper wrote down
+Japanese lyrics, and the subtitle there says only 「（リリアンの歌声）」 and two shouted lines,
+so the window is compared and matches 0%. A song the subtitle describes rather than
+transcribes is exactly the window a share rule has to absorb, and the result names it.
+⚠ **Not covered:** a real broadcast cut on a mask (a synthetic one was found when splitting
+was allowed; the built path refuses it by ruling), tiny/base whisper models, a CPU-only
+machine running the witness (large-v3 on a CPU is slow), non-Japanese audio. The probe
+scripts (`whisper_ref.py`, `vad_ref.py`, `matrix.py`, `textcheck.py`, `truthbench.py`) are
+to move to `tsubasa-corpus/_work/` with the re-fit.
+
 ## 6 — Cues that fall inside a removed stretch
 
 A broadcast subtitle applied to a streaming video needs a **negative** jump after the

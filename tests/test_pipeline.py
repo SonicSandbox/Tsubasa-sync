@@ -283,7 +283,8 @@ def test_a_video_with_no_subtitle_track_is_refused_with_what_would_fix_it():
     ref, why = PIPE.reference_for("/x/v.mkv", _reader([]))
     assert ref is None
     assert "no subtitle track" in why
-    assert "B6" in why
+    # ⭐ B6 built: what would change it is now a switch the user can flip.
+    assert "--vad" in why and "B6" in why
 
 
 def test_a_track_too_thin_to_measure_says_so_and_says_how_thin():
@@ -852,25 +853,37 @@ def test_force_never_writes_an_ERROR(episode, tmp_path):
 
 
 # ===========================================================================
-# 7. ⛔ vad=True NEITHER WORKS SILENTLY NOR RAISES FROM FOUR FRAMES DOWN
+# 7. vad=True ON A VIDEO THAT HAS A TRACK changes nothing but the notes
 # ===========================================================================
+# ⭐ B6 is built (`tests/test_speech.py` drives the speech path itself). What
+# stays true here: a video WITH a subtitle track is aligned against the track,
+# and the run still says what the speech path would use -- or what it lacks.
 
-def test_vad_true_says_the_band_has_not_been_fitted(episode):
-    u"""⛔ `verdict.MASK_BAND` is `None` until RUNBOOK B6, and borrowing the
-    cue-vs-cue 2.5x would silently refuse the 2.42x uncut pair
-    `12-alignment.md` §5 measured as CORRECT.
+class _NoSpeech(object):
+    u"""A speech module that must not be reached."""
+    from tsubasa.speech import SpeechUnavailable, ONSET_LAG
 
-    ⭐ `doctrine/architecture`: *instruction, not refusal* -- the run says what
-    would make it available instead of exploding or pretending.
-    """
-    got = PIPE.sync([(episode["video"], episode["subtitle"])], vad=True)
+    def speech_onsets(self, *a):
+        raise AssertionError("a video with a track reached the speech path")
+
+    heard_windows = speech_onsets
+
+    def describe(self):
+        return u"speech path: not needed"
+
+
+def test_vad_true_on_a_video_with_a_track_uses_the_track(episode):
+    got = PIPE.sync([(episode["video"], episode["subtitle"])], vad=True,
+                    speech=_NoSpeech())
     assert got[0].outcome == V.CONFIDENT
-    assert any("B6" in n for n in got.notes)
-    assert any("B6" in n for n in got[0].notes)
+    assert got[0].reference_kind == V.TEXT_TRACK
+    assert u"speech path: not needed" in got.notes
+    assert u"speech path: not needed" in got[0].notes
 
 
-def test_vad_true_does_not_raise_MaskBandNotFitted(episode):
-    got = PIPE.sync(API.scan(str(episode["root"])), vad=True)
+def test_vad_true_on_a_scan_with_tracks_stays_confident(episode):
+    got = PIPE.sync(API.scan(str(episode["root"])), vad=True,
+                    speech=_NoSpeech())
     assert got.confident
 
 

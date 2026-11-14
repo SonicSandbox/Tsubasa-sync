@@ -66,6 +66,9 @@ Options
   --pair V S         an explicit pair. Repeatable
   --pairs FILE       a JSON manifest: [["video", "subtitle"], ...]
   --force            write a pair the timing REFUSED. Explicit pairs only
+  --vad              a video with no subtitle track is measured against the
+                     speech in its audio, with a text check (needs whisper.cpp:
+                     TSUBASA_WHISPER, TSUBASA_VAD_MODEL, TSUBASA_ASR_MODEL)
   --dry-run          print every intended action; write and trash nothing
   --json             NDJSON, one object per result — the library's own shape
   --verbose          add the raw multiples, the chance level and the reference
@@ -531,6 +534,7 @@ def parse(argv):
         u"keep_all": False, u"pairs": [], u"force": False,
         u"dry_run": False, u"json": False, u"verbose": False,
         u"results": True, u"help": False, u"version": False,
+        u"vad": False,
     }
     rest = list(argv)
     while rest:
@@ -561,6 +565,8 @@ def parse(argv):
             opts[u"verbose"] = True
         elif arg == u"--no-results":
             opts[u"results"] = False
+        elif arg == u"--vad":
+            opts[u"vad"] = True
         elif arg == u"--pair":
             video = _value(rest, arg)
             if not rest or rest[0].startswith(u"--"):
@@ -766,7 +772,7 @@ def _run(opts):
     common = dict(write=write, rename=opts[u"rename"],
                   keep_all=opts[u"keep_all"], out_dir=opts[u"out"],
                   results=None if opts[u"results"] else False,
-                  suffix=opts[u"suffix"])
+                  suffix=opts[u"suffix"], vad=opts[u"vad"])
 
     if opts[u"pairs"]:
         return None, _pipeline.sync(opts[u"pairs"], force=opts[u"force"],

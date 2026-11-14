@@ -70,7 +70,9 @@ from .align import (BUCKET, MIN_ALIGNABLE_CUES, align, mapper_for,
                     place_breaks, removed_spans, unique_starts)
 from .apply import apply_plan
 from .naming import series as _series
-from .verdict import BITMAP_TRACK, CONFIDENT, ERROR, REFUSED, TEXT_TRACK
+from . import witness as _witness
+from .verdict import (BITMAP_TRACK, CONFIDENT, ERROR, REFUSED, SPEECH_MASK,
+                      TEXT_TRACK)
 
 #: ⚠ WHETHER A TRACK CARRIES BITMAPS IS DECIDED IN `container/`, where both
 #: readers' codec vocabularies live (RUNBOOK 3f). This module kept its own
@@ -99,12 +101,12 @@ class Reference(object):
     """
 
     __slots__ = ("starts", "kind", "description", "duration", "track",
-                 "spans")
+                 "spans", "hearing")
 
     def __init__(self, starts, kind, description, duration, track=None,
-                 spans=None):
+                 spans=None, hearing=None):
         self.starts = starts
-        self.kind = kind                # verdict.TEXT_TRACK / BITMAP_TRACK
+        self.kind = kind                # TEXT_TRACK / BITMAP_TRACK / SPEECH_MASK
         self.description = description
         self.duration = duration
         self.track = track
@@ -112,6 +114,11 @@ class Reference(object):
         #: a cut file's break inside its span (`align.place_breaks`); without
         #: it the break stays at `fit()`'s earliest tie.
         self.spans = spans
+        #: ⭐ B6. A speech mask only: a callable returning what the video's
+        #: audio SAYS in `witness.windows()` -- `[(start, text)]` -- for the
+        #: text witness. Lazy, because it costs a model run and is wanted only
+        #: by a pair whose timing already reached the accept band.
+        self.hearing = hearing
 
     def __repr__(self):
         return "Reference(%s, %d cues, %s)" % (
@@ -255,7 +262,7 @@ class SyncReport(object):
 
 def sync(source, write=False, rename=True, dedupe=True, vad=False,
          force=False, keep_all=False, out_dir=None, trash_root=None,
-         sender=None, reader=None, results=None, suffix=None):
+         sender=None, reader=None, results=None, suffix=None, speech=None):
     u"""Measure, decide, and -- only when told -- write. -> `SyncReport`
 
         sync(scan(...))                       measures. ⛔ Writes NOTHING.
@@ -278,8 +285,14 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
         the candidates that lost the slot go to the trash. `dedupe=False`
         leaves every one of them exactly where it is.
     `vad`
-        ⛔ RUNBOOK B6. The band for a speech mask has not been FITTED, so this
-        cannot silently do anything -- see `_vad_note`.
+        ⭐ RUNBOOK B6. A video with NO usable subtitle track is measured
+        against the speech in its own audio (Silero onsets for timing, a
+        whisper text check as the second signal) instead of being refused.
+        Off by default: it needs whisper.cpp and two models, found by
+        `speech.locate()`, and nothing is downloaded. A video that HAS a track
+        is aligned against the track either way.
+    `speech`
+        the speech module, injected -- the same kind of seam as `reader`.
     `force`
         ⛔ Explicit pairs only, and it overrides a REFUSAL, never an ERROR.
     `out_dir`
@@ -318,7 +331,7 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
         results = None
     notes = []
     if vad:
-        notes.append(_vad_note())
+        notes.append(_vad_note(speech))
 
     # ⛔ `out_dir` AND `rename=False` CONTRADICT EACH OTHER, and the result was
     # the exact file `_out_dir_for`'s own docstring forbids: the subtitle's
@@ -369,7 +382,7 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
                           keep_all=keep_all, out_dir=out_dir,
                           trash_root=trash_root, sender=sender, reader=reader,
                           vad=vad, notes=notes, results=results,
-                          suffix=suffix)
+                          suffix=suffix, speech=speech)
 
     plan = source if isinstance(source, _explicit.PairPlan) else \
         _explicit.explicit_pairs(pair_args=source)
@@ -377,7 +390,7 @@ def sync(source, write=False, rename=True, dedupe=True, vad=False,
                       keep_all=keep_all, out_dir=out_dir,
                       trash_root=trash_root, sender=sender, reader=reader,
                       force=force, vad=vad, notes=notes, results=results,
-                      suffix=suffix)
+                      suffix=suffix, speech=speech)
 
 
 # ---------------------------------------------------------------------------
@@ -648,21 +661,18 @@ def render(result, force=False):
                     before_zero)
 
 
-def _vad_note():
-    u"""⛔ `vad=True` may not silently do nothing, and it may not raise from
-    four frames down either.
+def _vad_note(speech=None):
+    u"""What `vad=True` will use, or what it is missing -- said ONCE, up front.
 
-    `doctrine/architecture`: *instruction, not refusal -- an unavailable
-    feature renders what would make it available.* `verdict.MASK_BAND` is
-    `None` and a mask verdict RAISES, deliberately, because borrowing the
-    cue-vs-cue 2.5x would silently refuse the 2.42x uncut pair
-    `12-alignment.md` §5 measured as CORRECT.
+    ⛔ `doctrine/architecture`: *instruction, not refusal -- an unavailable
+    feature renders what would make it available.* A run asked for the speech
+    path on a machine without whisper.cpp must say so on the run, not only on
+    each video that needed it.
     """
-    return (u"vad=True was asked for and the speech-mask path is not built "
-            u"yet (RUNBOOK B6): its accept/refuse band has never been fitted, "
-            u"and borrowing the cue-vs-cue band would silently refuse pairs "
-            u"12-alignment.md §5 measured as correct. Videos with no usable "
-            u"subtitle track are refused by name rather than guessed at.")
+    if speech is None:
+        from . import speech as speech
+    describe = getattr(speech, "describe", None)
+    return describe() if describe else u"speech path: injected"
 
 
 def _default_reader(path):
@@ -686,8 +696,12 @@ def _default_trash_root():
 # reading the reference
 # ---------------------------------------------------------------------------
 
-def reference_for(video_path, reader):
+def reference_for(video_path, reader, vad=False, speech=None):
     u"""What to align against. -> (`Reference` or None, reason)
+
+    ⭐ B6: with `vad`, a video with no usable track is measured against the
+    speech in its audio (`speech_reference`). Without it, the refusal names
+    the switch. `speech` is the seam the suite drives that path through.
 
     ⭐ THE TRACK WITH THE MOST CUES WINS, and that is not arbitrary: a
     `forced` track carries signs only -- a few dozen moments over a whole
@@ -717,11 +731,19 @@ def reference_for(video_path, reader):
                       MIN_ALIGNABLE_CUES))
         else:
             why = u"it has no subtitle track to align against"
+        if vad:
+            ref, failed = speech_reference(video_path, info.duration,
+                                           speech=speech)
+            if ref is not None:
+                return ref, u""
+            return None, (u"%s, and its speech could not be measured instead: "
+                          u"%s" % (why, failed))
         # 🚨 The hand-back sentence `03-permissions.md` §hand-back requires:
         # what was measured, why it fell short, and WHAT WOULD CHANGE IT.
-        return None, (u"%s. The speech-mask path that does not need one lands "
-                      u"at RUNBOOK B6 and its band has not been fitted yet, "
-                      u"so nothing is guessed here." % why)
+        return None, (u"%s. Run with --vad (vad=True) to measure it against "
+                      u"the speech in its audio instead -- RUNBOOK B6; it "
+                      u"needs whisper.cpp and two of its models, and nothing "
+                      u"is guessed without them." % why)
 
     usable.sort(key=lambda t: (-len(t.cues), not t.default, bool(t.forced),
                                t.index))
@@ -746,6 +768,42 @@ def reference_for(video_path, reader):
                      spans=[(c.start, c.end) for c in track.cues]), u""
 
 
+def speech_reference(video_path, duration, speech=None):
+    u"""A SPEECH_MASK `Reference` from the video's audio. -> (ref or None, why)
+
+    The reference is Silero's speech ONSETS moved earlier by
+    `speech.ONSET_LAG`, so the fit reads the subtitle's own offset rather than
+    the captioning convention's lead (`12-alignment.md` §5b). `spans` carry the
+    speech segments for `place_breaks`, though one offset is all a mask fits.
+
+    ⛔ `speech` defaults to the real module; the suite passes an object with
+    the same three names (`speech_onsets`, `heard_windows`, `ONSET_LAG`,
+    `SpeechUnavailable`) so the pipeline's handling is tested without a model.
+    """
+    if speech is None:
+        from . import speech as speech
+    try:
+        segments = speech.speech_onsets(video_path, duration)
+    except speech.SpeechUnavailable as exc:
+        return None, u"%s" % exc
+    if len(segments) < MIN_ALIGNABLE_CUES:
+        return None, (u"Silero heard only %d stretch%s of speech in it, and "
+                      u"%d are needed to measure against"
+                      % (len(segments), u"" if len(segments) == 1 else u"es",
+                         MIN_ALIGNABLE_CUES))
+    lag = speech.ONSET_LAG
+    starts = [t0 - lag for t0, _t1 in segments]
+    spans = [(t0 - lag, t1 - lag) for t0, t1 in segments]
+
+    def hearing():
+        return speech.heard_windows(video_path, duration)
+
+    return Reference(starts, SPEECH_MASK,
+                     u"speech in the audio (%d stretches, Silero VAD)"
+                     % len(segments), duration, spans=spans,
+                     hearing=hearing), u""
+
+
 def _is_bitmap(codec):
     # Kept as this module's own name: `probe_adj26` mutates `_is_bitmap`.
     # Imported at call time, the way `_default_reader` above does it.
@@ -768,7 +826,8 @@ class _Measured(object):
 
     __slots__ = ("video", "subtitle", "fit", "sidecar", "cue_count",
                  "content_end", "reference", "verdict", "notes", "rejection",
-                 "cluster_coherence", "pair", "decision", "speculative")
+                 "cluster_coherence", "pair", "decision", "speculative",
+                 "witness")
 
     def __init__(self, video, subtitle, fit=None, sidecar=None, cue_count=0,
                  content_end=None, reference=None, notes=(), rejection=None):
@@ -785,6 +844,9 @@ class _Measured(object):
         #: user may simply not have a video for yet.
         #: `discover.Candidates._absolute_fallback` carries the reasoning.
         self.speculative = False
+        #: ⭐ B6: the text witness, on a speech-mask pair whose timing reached
+        #: the accept band. None everywhere else -- see `_witness_for`.
+        self.witness = None
         self.video = video
         self.subtitle = subtitle
         self.fit = fit
@@ -853,8 +915,13 @@ def measure(video_path, subtitle_path, reference):
                          reference=reference,
                          rejection=(ERROR, why))
 
+    # ⛔ ONE OFFSET ON A SPEECH MASK. `12-alignment.md` §5 ruling 1: at launch
+    # the mask path fits a single offset and REFUSES when the bucket walk
+    # fails; split detection on a mask is EVOLUTION, because its margins were
+    # calibrated on 60-95% cue-vs-cue rates the mask never reaches.
+    mask = reference.kind == SPEECH_MASK
     fit = align(unique_starts(reference.starts), unique_starts(starts),
-                reference.duration)
+                reference.duration, max_segments=1 if mask else None)
     # ⭐ 0.1.12: a cut file's break, placed by the lines' own ends inside the
     # span `fit()` left it in. Without this the lines between the earliest tie
     # and the real break take the other segment's offset -- or, on a negative
@@ -872,9 +939,38 @@ def measure(video_path, subtitle_path, reference):
     if (not fit.is_cut
             and 0.0 < abs(fit.segments[0][1]) <= SETTLED_SHIFT):
         fit.segments = [(None, 0.0)]
-    return _Measured(video_path, subtitle_path, fit=fit, sidecar=sidecar,
-                     cue_count=len(parsed.cues), content_end=content_end,
-                     reference=reference)
+    m = _Measured(video_path, subtitle_path, fit=fit, sidecar=sidecar,
+                  cue_count=len(parsed.cues), content_end=content_end,
+                  reference=reference)
+    if mask:
+        m.witness = _witness_for(reference, parsed.cues, fit)
+        if m.witness is not None:
+            m.notes.append(m.witness.summary())
+    return m
+
+
+def _witness_for(reference, cues, fit):
+    u"""The text witness for a speech-mask pair. -> `witness.Witness` or None
+
+    ⭐ ASKED ONLY OF A PAIR THE TIMING WOULD ACCEPT. Everything else is
+    refused on timing alone and the model run would buy nothing; a wrong
+    episode costs ~2 s of VAD, not ~10 s of transcription.
+
+    ⛔ A witness that could not run is `unavailable`, never absent: the
+    verdict refuses on it with the reason, rather than accepting on timing
+    alone. Two signals were promised; one is not the same claim.
+    """
+    if not _verdict.mask_would_accept(fit):
+        return None
+    if reference.hearing is None:
+        return _witness.Witness.unavailable(
+            u"this reference carries no audio to transcribe")
+    from . import speech as _speech
+    try:
+        heard = reference.hearing()
+    except _speech.SpeechUnavailable as exc:
+        return _witness.Witness.unavailable(u"%s" % exc)
+    return _witness.check(heard, cues, fit.segments[0][1])
 
 
 # ---------------------------------------------------------------------------
@@ -1034,7 +1130,8 @@ def judge(measured, clusters):
             m.cluster_coherence = (cluster.coherence if cluster is not None
                                    else None)
             m.verdict = _verdict.verdict(m.fit, cluster=cluster,
-                                         reference_kind=m.reference.kind)
+                                         reference_kind=m.reference.kind,
+                                         witness=m.witness)
         elif m.verdict is None and m.rejection is not None:
             outcome, reason = m.rejection
             m.verdict = _verdict.Verdict(outcome, reason, band=u"error")
@@ -1046,7 +1143,8 @@ def judge(measured, clusters):
 # ---------------------------------------------------------------------------
 
 def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
-               sender, reader, vad, notes, results=None, suffix=None):
+               sender, reader, vad, notes, results=None, suffix=None,
+               speech=None):
     u"""Measure and decide a whole discovery. -> `SyncReport`
 
     ⭐ TWO PASSES, and the reason is the cluster. Every pair is measured first
@@ -1111,7 +1209,8 @@ def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
     # implementation. `05-interface.md` §*this file and the RUNBOOK disagreed*.
     films = _movies.pair_movies(
         [v.path for v in scan.videos], [s.path for s in scan.subtitles],
-        duration_of=_durations_for(scan, references, reader),
+        duration_of=_durations_for(scan, references, reader, vad=vad,
+                                   speech=speech),
         parsed_of=_api._parsed_of(scan.videos + scan.subtitles))
     film_subs = {}
     for pair in films.pairs:
@@ -1183,7 +1282,8 @@ def _sync_scan(scan, write, rename, dedupe, keep_all, out_dir, trash_root,
                                for p, v in state.answers.items())
                 continue
 
-        reference, why = _reference_cached(video.path, references, reader)
+        reference, why = _reference_cached(video.path, references, reader,
+                                           vad=vad, speech=speech)
         if reference is None:
             # ⭐ ONE result for the video, not one per candidate. Every
             # candidate fails identically and for a reason that is about the
@@ -1243,7 +1343,7 @@ def _waiting_note(ranked):
                           for c in ranked[:4])))
 
 
-def _reference_cached(video_path, cache, reader):
+def _reference_cached(video_path, cache, reader, vad=False, speech=None):
     u"""One container read per VIDEO per run, never one per candidate.
 
     ⭐ `00-INDEX.md` Rule 4 at the level that matters most here: the container
@@ -1252,11 +1352,12 @@ def _reference_cached(video_path, cache, reader):
     whole run.
     """
     if video_path not in cache:
-        cache[video_path] = reference_for(video_path, reader)
+        cache[video_path] = reference_for(video_path, reader, vad=vad,
+                                          speech=speech)
     return cache[video_path]
 
 
-def _durations_for(scan, references, reader):
+def _durations_for(scan, references, reader, vad=False, speech=None):
     u"""The `duration_of` seam `movies.pair_movies` takes, answering for BOTH
     kinds of file -- a video's container runtime and a subtitle's content end.
 
@@ -1275,7 +1376,11 @@ def _durations_for(scan, references, reader):
                 ends[path] = _duration.content_end(
                     [c.start for c in parsed.cues]) if parsed.ok else None
             return ends[path]
-        reference, _why = _reference_cached(path, references, reader)
+        # ⚠ The SAME switches as the alignment loop: this fills the cache the
+        # loop reads, and a film looked up here without `vad` would leave a
+        # no-track refusal behind for the loop to find.
+        reference, _why = _reference_cached(path, references, reader,
+                                            vad=vad, speech=speech)
         return reference.duration if reference is not None else None
 
     return duration_of
@@ -1286,7 +1391,8 @@ def _durations_for(scan, references, reader):
 # ---------------------------------------------------------------------------
 
 def _sync_plan(plan, write, rename, dedupe, keep_all, out_dir, trash_root,
-               sender, reader, force, vad, notes, results=None, suffix=None):
+               sender, reader, force, vad, notes, results=None, suffix=None,
+               speech=None):
     u"""Measure and decide a `PairPlan`. -> `SyncReport`
 
     🚨 EVERY REFUSAL THE PLAN CARRIES BECOMES A RESULT. That is the whole
@@ -1320,7 +1426,8 @@ def _sync_plan(plan, write, rename, dedupe, keep_all, out_dir, trash_root,
             notes=[u"refused before anything was opened (%s)" % refusal.kind]))
 
     for pair in plan.pairs:
-        reference, why = _reference_cached(pair.video, references, reader)
+        reference, why = _reference_cached(pair.video, references, reader,
+                                           vad=vad, speech=speech)
         if reference is None:
             m = _Measured(pair.video, pair.subtitle,
                           sidecar=_sidecar.parse_path(pair.subtitle),

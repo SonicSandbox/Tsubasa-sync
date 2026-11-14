@@ -62,6 +62,7 @@ Folders are searched recursively. Anything that is not a video or a subtitle is 
 | `--pair V S` | an explicit pair. Repeatable |
 | `--pairs FILE` | a JSON manifest of pairs |
 | `--force` | write a pair the timing REFUSED. Explicit pairs only |
+| `--vad` | a video with **no subtitle track** is measured against the speech in its own audio, and a text check must agree before anything is written. Needs whisper.cpp and two of its models, found through `TSUBASA_WHISPER` (the folder with `whisper.dll` / `libwhisper`), `TSUBASA_VAD_MODEL` (`ggml-silero-*.bin`) and `TSUBASA_ASR_MODEL` (a whisper `ggml-*.bin`). Nothing is downloaded |
 | `--json` | one JSON object per result, on stdout |
 | `--verbose` | add the raw measurements and which reference was used |
 | `--no-results` | ignore, and do not update, the record of what was already synced |
