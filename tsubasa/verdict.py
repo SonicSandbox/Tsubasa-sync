@@ -92,17 +92,26 @@ SPEECH_MASK = u"speech mask"
 
 REFERENCE_KINDS = frozenset((TEXT_TRACK, BITMAP_TRACK, SPEECH_MASK))
 
-#: ⛔ UNFITTED, AND STRUCTURALLY SO. `12-alignment.md` §5.2: *"The mask-path
-#: thresholds are fitted separately, with negative controls, before any mask
-#: verdict ships (RUNBOOK B6)."*
+#: ⭐ FITTED 2026-11-14 (RUNBOOK B6), as `(refuse_below, accept_at)`, on Silero
+#: onsets from whisper.cpp's ggml Silero (`speech.py`) against real subtitles,
+#: with negative controls (`12-alignment.md` §5b):
 #:
-#: ⭐ It is `None` rather than a comment saying *"fit these at B6"* because
-#: `doctrine/robustness`: **a rule that relies on remembering will be
-#: forgotten.** A borrowed 2.5 would refuse the 2.42x uncut pair that this
-#: project measured as CORRECT, and it would do it silently. When B6 fits the
-#: band this becomes `(refuse_below, accept_at)` and `MaskBandNotFitted`
-#: becomes unreachable -- that is the whole change.
-MASK_BAND = None
+#:     right pair, own embedded track (truth 0)   2.76-3.82x   n = 9, 3 shows
+#:     right pair, Dr. Stone SW 01-11 (.ab.srt)   2.71-3.73x   n = 11
+#:     wrong episode, same show                   <= 1.73x     n = 182
+#:     time-reversed / sigma 4 s jitter           1.38x / 1.30x
+#:
+#: EMPTY BAND 1.73-2.71x. Both constants sit inside it, and `accept_at` sits
+#: LOW in it on purpose: `12-alignment.md` §5 measured a correct uncut Yomi
+#: pair at 2.42x with onnxruntime Silero, a different segmenter, and real
+#: broadcast cuts at 1.94x -- which land in the escalation band and are
+#: refused, because a mask has no coherence lift (`_mask_band_of`).
+#:
+#: 🚨 TIMING IS NOT ENOUGH ON ITS OWN HERE. A speech-mask pair is CONFIDENT only
+#: when the TEXT WITNESS also passes (`witness.py`): two independent signals,
+#: because this band was fitted on 5 shows and the Yomi + Probe F re-fit the
+#: spec asks for has not been run on this segmenter yet.
+MASK_BAND = (1.75, 2.2)
 
 #: A bitmap track's ON-times are cue moments like any other -- the container
 #: block timestamps that produced them know nothing about the codec -- so the
@@ -265,7 +274,7 @@ class Verdict(object):
 # the front door
 # ---------------------------------------------------------------------------
 
-def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
+def verdict(fit, cluster=None, reference_kind=TEXT_TRACK, witness=None):
     u"""Decide one pair. -> `Verdict`
 
     `fit`
@@ -276,6 +285,10 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
         lift a pair out of it.
     `reference_kind`
         `TEXT_TRACK`, `BITMAP_TRACK` or `SPEECH_MASK`.
+    `witness`
+        ⭐ B6, a speech mask only: the `witness.Witness` text check. A mask
+        pair whose timing reaches the accept band is CONFIDENT only if it
+        passed; ⛔ an absent witness refuses, it never waves a pair through.
 
     ⛔ THE ORDER OF THESE TESTS IS LOAD-BEARING and it is not the obvious one:
 
@@ -343,6 +356,14 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
         else _mask_band_of(fit.excess, accept_at, refuse_below)
     common["band"] = band
 
+    if band == u"accept" and reference_kind == SPEECH_MASK:
+        if witness is None or not witness.passed:
+            common["band"] = u"escalate"
+            return Verdict(REFUSED, _witness_reason(fit, witness), **common)
+        # ⚠ The word is capped at `fair`: `strong` and `locked` are floors on
+        # the CUE-VS-CUE excess scale, and a mask's 3x is not a text track's.
+        return Verdict(CONFIDENT, u"", word=u"fair", **common)
+
     if band == u"accept":
         lifted = (vouching is not None and vouching.coheres
                   and fit.excess < accept_at)
@@ -368,6 +389,36 @@ def verdict(fit, cluster=None, reference_kind=TEXT_TRACK):
     return Verdict(REFUSED, _band_reason(fit, band, cluster, accept_at,
                                          refuse_below, reference_kind),
                    **common)
+
+
+def mask_would_accept(fit):
+    u"""Would a speech-mask fit be accepted ON TIMING ALONE? -> bool
+
+    ⭐ The pipeline asks this before running the text witness, so a pair the
+    timing already refuses never pays for a transcription. ⛔ The same
+    measurable -> holds -> band order as `verdict()`, reading the same
+    constants -- not a second copy of the rule with its own numbers."""
+    if _too_thin(fit) or not fit.measurable or not fit.holds_throughout:
+        return False
+    return fit.excess >= _band_for(SPEECH_MASK)[0]
+
+
+def _witness_reason(fit, witness):
+    u"""A mask pair whose timing passed and whose text check did not."""
+    measured = (u"%d%% of the speech in the audio lines up with this "
+                u"subtitle, %.1f times chance -- enough on timing alone"
+                % (int(round(fit.score * 100)), fit.excess))
+    if witness is None:
+        why = (u"but no text check was run, and on a speech mask the timing "
+               u"is not trusted without one")
+    elif not witness.available:
+        why = (u"but the text check that has to agree could not run: %s"
+               % witness.reason)
+    else:
+        why = u"but %s" % witness.reason
+    return (u"%s -- %s. Nothing is written. A subtitle for this exact release "
+            u"will pair; --pair with --force writes this one anyway and says "
+            u"so on the line." % (measured, why))
 
 
 def _own_offset(fit):
@@ -781,7 +832,7 @@ def _clock(seconds):
 __all__ = [
     "CONFIDENT", "REFUSED", "ERROR", "OUTCOMES",
     "TEXT_TRACK", "BITMAP_TRACK", "SPEECH_MASK", "REFERENCE_KINDS",
-    "MASK_BAND", "MaskBandNotFitted",
+    "MASK_BAND", "MaskBandNotFitted", "mask_would_accept",
     "ACCEPT_AT", "REFUSE_BELOW", "LIFTED_WORD",
     "Verdict", "verdict",
 ]

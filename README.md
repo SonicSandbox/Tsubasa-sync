@@ -363,8 +363,12 @@ bug report.
 
 ## What it can't do yet
 
-- **A video with no embedded subtitle track and no bitmap track is refused.**
-  Audio analysis is specified but not yet wired.
+- **A video with no embedded subtitle track and no bitmap track** is refused
+  unless you pass `--vad`: then it is measured against the speech in its own
+  audio, and a short transcription has to say the same thing as the subtitle
+  before anything is written. That needs whisper.cpp and two of its models,
+  which tsubasa finds but does not ship or download (`docs/USAGE.md`). Fitted
+  on five shows so far; one offset only, so a broadcast cut is refused.
 - **Non-Matroska containers need ffmpeg**, and that path is not yet exercised
   against real files.
 - **macOS** is built and tested in CI but not hand-verified.

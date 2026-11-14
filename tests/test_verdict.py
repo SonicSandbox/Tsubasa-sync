@@ -701,32 +701,17 @@ def test_the_escalated_refusal_reports_the_cluster_that_disagreed():
 
 
 # ---------------------------------------------------------------------------
-# the mask band -- UNFITTED, and structurally so
+# the mask band -- FITTED at B6, and not borrowed
 # ---------------------------------------------------------------------------
+# ⭐ `tests/test_speech.py` pins it inside its measured empty band and drives
+# the text witness it depends on. Kept here: that it is the MASK's own band.
 
-def test_a_speech_mask_verdict_RAISES_until_B6_fits_its_band():
-    u"""🚨 `12-alignment.md` §5.2. Correct UNCUT pairs measured **2.42-2.77x**
-    on a mask while real broadcast CUTS sat at **1.94x** -- straddling the 2.5
-    cue-vs-cue accept line. Borrowing that line refuses a correct pair,
-    silently.
-
-    ⛔ It raises rather than refuses because this is a TOOLING fault, not a
-    product verdict: a quiet refusal ships a tool that says no to every VAD
-    pair and looks like it is working."""
-    with pytest.raises(V.MaskBandNotFitted) as e:
-        V.verdict(make_fit(excess=2.6), reference_kind=V.SPEECH_MASK)
-    message = str(e.value)
-    assert "B6" in message, message
-    assert "2.42-2.77x" in message, (
-        "the fault must carry the measurement that makes it a fault: %s"
-        % message)
-
-
-def test_the_mask_band_is_ABSENT_rather_than_a_borrowed_default():
-    u"""⭐ `doctrine/robustness`: a rule that relies on remembering will be
-    forgotten. A comment saying *"fit these at B6"* beside a copied 2.5 is the
-    version of this that does not hold."""
-    assert V.MASK_BAND is None
+def test_the_mask_band_is_its_OWN_and_not_the_cue_vs_cue_one():
+    u"""🚨 `12-alignment.md` §5.2: borrowing the 2.5 cue-vs-cue accept line
+    would refuse correct mask pairs measured at 2.42x, silently."""
+    refuse_below, accept_at = V.MASK_BAND
+    assert (refuse_below, accept_at) != (REFUSE_BELOW, ACCEPT_AT)
+    assert accept_at < ACCEPT_AT
 
 
 def test_a_bitmap_track_uses_the_cue_band_unchanged():
