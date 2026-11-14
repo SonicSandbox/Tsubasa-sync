@@ -140,7 +140,7 @@ and was passing against the broken code. `LEDGER.md` §Harness.
 that day, and everything from 3a onward (3a, 3a-bis, 3b, 3c, 3c-0, 3d, 3e, 3f, 4a, 4c,
 4d, 4e, 4f, 4g) was built after it and is recorded in its own `## Step` section below,
 each carrying its own proof. **`HANDOFF.md` is the current state; this is history.**
-Only **3g**, **4b** and **B6** are unbuilt, and each says so in its own section.
+Only **3g** and **4b** are unbuilt, and each says so in its own section. ⭐ **B6 was built at 0.1.13** (2026-11-14, Tsu-V, based on Mattias's Tsubasa-sync #4; `12-alignment.md` §5b).
 
 ---
 
@@ -455,7 +455,7 @@ deriver removed the need for either.**
 | ~~B3~~ | ✅ **DONE** — uncapped, quiet-gap convention, `TIE_SLACK`. ✅ **The cut-gap cue drop (`D9`) landed at 3a**, where the writer is. ⚠ **Still owed:** a synthetic 3-break file (`test_nsplit.py`) | `test_nsplit.py` |
 | ~~B4~~ | ✅ **DONE** — the walk is free from the same pass | ✅ |
 | **B5** | Perf: 29 pairs under 2 s; 24-episode folder under 5 s with 1d. ⭐ **1d's half is now measured: 0.087 s/file × 24 ≈ 2.1 s of container reading**, so the budget left for everything else is ~2.9 s | `test_perf.py`, baseline recorded, never pinned |
-| **B6** | 🚨 **Silero VAD, built in** (onnxruntime, 576-sample input). **Single offset + refuse on a failing bucket.** Fit the mask-path constants on the Yomi material + Probe F's controls **before** any mask verdict ships; refuse if the decoded sample count is short of the container duration by > 3% | `test_vad.py` (`12-alignment.md` §8) |
+| ~~**B6**~~ | ✅ **BUILT 0.1.13 (2026-11-14), not released.** Silero through whisper.cpp's ggml port, FOUND not bundled (the onnxruntime row was ruled out: a new dependency, ~21 s an episode against ~4 s) — exact-version + read-back layout check. **Single offset + refuse on a failing bucket.** Constants fitted on the Yomi material + Probe F's controls: `MASK_BAND (2.0, 2.6)`, `ONSET_LAG 0.31`, `MIN_MASK_ONSETS 100`; refused if decoded > 3% short. ⭐ A TEXT WITNESS is required too (Mattias's). Based on Mattias's Tsubasa-sync #4. `12-alignment.md` §5b | ✅ `test_speech.py` (media-free) + `test_vad.py` (Yomi, real audio) + `_work`-style mutants (`scratch/b6/p6_mutants.py`) |
 | ~~B6b~~ | ⏸ **EVOLUTION** — split detection on a mask; route written in `12-alignment.md` §5 | — |
 | ~~**B8**~~ | ✅ **DONE 2026-09-09.** `tsubasa/verdict.py` — the three outcomes, the band, the one-directional coherence lift, the hand-back sentences, and the mask band left **structurally absent** until B6. See the block below | ✅ `test_verdict.py` **63 checks, 39/39 mutants** (`_work/probe_adj22_verdictmutants.py`) |
 

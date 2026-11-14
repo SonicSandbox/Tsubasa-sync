@@ -93,7 +93,8 @@ any mask verdict ships.**
 | ⭐ **alignment_oracle** | the 29 pairs, cue-level, the undetermined span | material unlike the corpus | ✅ **green 2026-09-08**, 10 checks |
 | **negative_controls** | reversed, jittered, different show, sequel, deleted opening, thin input, and the break-size guard | — | ✅ **green 2026-09-08**, 11 checks |
 | nsplit · timeline | uncapped cuts; the walk | a real 3+-break specimen (derive it) | ⚠ the mechanism landed with B1; **a synthetic 3-break file is still owed** |
-| **vad** *(new)* | the Yomi set + Probe F material | languages and genres not in it | B6 |
+| **vad** | the Yomi set on REAL audio (whisper.cpp's ggml Silero + a whisper model): uncut within 0.15 s of truth and CONFIDENT, both AT-X cuts and the wrong episode REFUSED, an English subtitle on Japanese speech called a language mismatch, a decode 3% short not measured | languages and genres not in it; any whisper.cpp but 1.8.4 | ✅ **B6, 0.1.13** |
+| **speech** | the mask path's every rule, media-free (the speech module injected): two signals, the hardest wrong pair (identical timing), one offset, the cost guard, the onset floor, the witness's own rules, the layout and version checks | what Silero and whisper hear — that is `vad` | ✅ **B6, 0.1.13** |
 | perf | 29 pairs < 2 s; 24 episodes < 5 s | other hardware — re-baseline on move | B5 |
 | ⭐ **verdict** | the three outcomes and the ORDER they are decided in (cue count → holds-throughout → band); the one-directional coherence lift; that a refusal carries no confidence word; that a speech-mask verdict RAISES until B6 fits its band | ⛔ whether the band's numbers are *right* — that is `LEDGER.md` §Logic's 364 measured pairs, not this suite; and the mask band, which does not exist yet | ✅ **green 2026-09-09**, 63 checks, **39/39 mutants** |
 | ⭐ **sidecar** | the language reader hato imports, against **two defects live in shipped software and failing in opposite directions**; NAME_MAX in bytes; the Windows rules; a real-data pass over 24,315 corpus filenames; ⭐ **the bracketed and hyphenated tag forms** (`[cc]`, `[sdh]`, `ja-jp`) **and the guard that refuses to read `[E27C3F25]` as a language** | ⛔ a three-letter-only language (no ISO 639-1 code) — it reads as `und`, which costs a duplicate and never a wrong file; a filename convention the corpus does not contain; and 🚨 **a defect the corpus's own composition makes impossible** — `.ja[cc].srt` vs `.en[cc].srt` sharing one `und` slot was invisible to 78 green checks **and** to a 24,315-name real-data pass, because this corpus is Japanese-only. It took RUNBOOK 3c-0 constructing a bilingual library | ✅ **green 2026-09-09**, 80 checks, **56/56 mutants** |
@@ -166,8 +167,8 @@ found three defects no assertion reached; `LEDGER.md` §Interface has them.
 | a different show's subtitle | REFUSED (1.39×) |
 | sequel season sharing an episode number | REFUSED (1.28×) |
 | opening cues **deleted**, not shifted | **one segment, no phantom break** (3.21×, −1.00 s) |
-| broadcast cut on a speech mask | REFUSED with the failing-bucket reason (1.94×) |
-| wrong episode on a speech mask | REFUSED (1.36×) |
+| broadcast cut on a speech mask | REFUSED — on whisper.cpp's ggml Silero (B6): NanakoRaws by a failing bucket (2.33×), 🚨 shincaps by the BAND (2.34×, it holds throughout) |
+| wrong episode on a speech mask | REFUSED (not measurable on ggml Silero; 1.36× on onnxruntime's) |
 
 ---
 

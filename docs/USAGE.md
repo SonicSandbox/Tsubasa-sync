@@ -62,6 +62,7 @@ Folders are searched recursively. Anything that is not a video or a subtitle is 
 | `--pair V S` | an explicit pair. Repeatable |
 | `--pairs FILE` | a JSON manifest of pairs |
 | `--force` | write a pair the timing REFUSED. Explicit pairs only |
+| `--vad` | a video with **no subtitle track** is timed against the speech in its own audio, with a text check — see *A video with no subtitle track* below |
 | `--json` | one JSON object per result, on stdout |
 | `--verbose` | add the raw measurements and which reference was used |
 | `--no-results` | ignore, and do not update, the record of what was already synced |
@@ -169,6 +170,25 @@ no measured offset to write — and it is refused on a scan, where it would mean
 best of several rejected candidates.
 
 → [`examples/sync_a_folder.py`](../examples/sync_a_folder.py)
+
+#### A video with no subtitle track — `--vad`
+
+Off by default. With `--vad` (`sync(..., vad=True)`), a video that has no subtitle track to
+align against is timed against the **speech in its own audio** instead of being refused:
+
+- **Timing** — where speech starts, from Silero VAD. **One offset only**: a subtitle from a
+  broadcast with a cut in it is refused, never split.
+- **A text check, required** — ten short stretches of the audio are transcribed and must
+  say what the subtitle says there. A pair is CONFIDENT only when both agree, and its word
+  is at most `fair`. Measured on Japanese speech so far; a subtitle in another language
+  than the audio cannot be checked this way, and is refused saying so.
+- **What it needs** — whisper.cpp 1.8.4 and two of its models, **found, never downloaded**:
+  `TSUBASA_WHISPER` (the folder holding `whisper.dll` / `libwhisper`), `TSUBASA_VAD_MODEL`
+  (`ggml-silero-*.bin`) and `TSUBASA_ASR_MODEL` (a `ggml-*.bin` whisper model), or
+  `tsubasa.speech.set_location(...)`. Any other whisper.cpp release is refused by name.
+- **Cost** — a few seconds a video for the timing; the text check, only for a pair whose
+  timing already passed, is about two minutes a video on a CPU with the small model.
+  Both are kept, so a video is measured once.
 
 ### 3. Read the results
 
