@@ -363,8 +363,12 @@ bug report.
 
 ## What it can't do yet
 
-- **A video with no embedded subtitle track and no bitmap track is refused.**
-  Audio analysis is specified but not yet wired.
+- **A video with no embedded subtitle track and no bitmap track is refused**
+  unless you pass `--vad`: then it is timed against the speech in its audio,
+  with a text check that must agree — one offset only, Japanese speech only so
+  far, and it needs whisper.cpp 1.8.4 and two of its models, found, never
+  downloaded ([`docs/USAGE.md`](docs/USAGE.md)). A subtitle in another language
+  than the audio can't be checked that way and is refused.
 - **Non-Matroska containers need ffmpeg**, and that path is not yet exercised
   against real files.
 - **macOS** is built and tested in CI but not hand-verified.

@@ -308,6 +308,72 @@ calibrated on 60–95% cue-vs-cue rates is out of reach.
    **not achievable here** without a different runtime or file-level parallelism; it is
    restated in `01-scope.md`. The profile is cached per video, so it is paid once.
 
+### 🚨 5b — B6 AS BUILT (0.1.13, 2026-11-14): measured on this project's corpus
+
+**Based on Mattias's Tsubasa-sync #4** (rebuilt, never merged; its band re-measured here
+and one of its constants found to accept a real cut). Behind `--vad` / `sync(vad=True)`,
+off by default. Measured by the B6 probes (timing over the corpus, the onset floor, the
+witness and its cost, the lag sweep, 32 mutants), kept beside the corpus, not in the repo.
+
+| | |
+| --- | --- |
+| ⭐ **The engine: whisper.cpp's ggml Silero, FOUND, not onnxruntime built in** | onnxruntime would be a new dependency for tsubasa and for every program freezing it (Sonic's yes needed), and measured ~21 s an episode (§5). The ggml Silero runs **~4 s a 24-minute episode** on 4 CPU threads (+ ~1.9 s ffmpeg decode), needs nothing installed beyond what a learner with Anki Miner's subtitle generation already has, and the same library carries the text check. ⚠ **The price is coupling to another program's binary**, paid in `speech.py`: used only at an EXACT proven release (`PROVEN_VERSIONS = ("1.8.4",)`, not a prefix), every function looked up before any call, the library's own defaults read back through our structs (17 fields, the last before `vad` included, so a field inserted anywhere shows), only ggml's CPU backend registered (the GPU backends enumerate devices in native code at load). Any failure is a refusal with its sentence. ⛔ A native abort cannot be caught in-process; an application that runs the CLI as a subprocess sees it as no answer. Proven on the `whisper.dll` Anki Miner 3.10 ships (1.8.4) |
+| **The material** | Yomi 15/18/20 (audio; SubsPlease, ABEMA, Netflix, two AT-X cuts, NanakoRaws S01E15) + Probe F's Gintama 201, One Piece 1121, 86 03, Naruto 113 / Shippuuden 113, Sintel. Wrong pairs are mostly the SAME show's other episodes: Yomi 01–21 against each of three episodes, Gintama 198–204, One Piece 1110–1122, Naruto SB-RAW 110–116 — 104 wrong, 9 right, 2 cuts, 2 controls per right pair (reversed, σ = 4 s jitter) |
+| **Timing, one offset, lag 0** | right **2.84–4.75×** (yomi 3.36–4.42, Gintama 2.84, One Piece 4.75, 86 3.32) · 🚨 **shincaps AT-X CUT 2.34× and HOLDS THROUGHOUT** (no failing bucket on this segmenter — §5 saw one on onnxruntime's) · NanakoRaws cut 2.33×, fails a bucket · wrong episodes: all but 7 not even measurable; the 7 measurable **1.40–1.92×** · controls ≤ 1.87× except Sintel's (below) |
+| 🚨 **`MASK_BAND = (2.0, 2.6)`** | `accept_at` 2.6 sits between the cut (2.34) and the lowest right pair here (2.84) and #4's (2.71). ⛔ **#4's 2.2 accepts shincaps** — and the witness PASSES a cut too (below), so #4 would write it with its opening 3:42 ten seconds out. `refuse_below` 2.0 is above every wrong pair and control (1.92) |
+| ⛔ **`MIN_MASK_ONSETS = 100`** | Sintel (a film, mostly music: 23 speech segments in 889 s) accepted a σ = 4 s jittered subtitle at **10.35×**. Thinning Yomi's real onsets (4 seeds × 3 episodes × 22 wrong/controls): false accepts **49/264 at 25 onsets, 22 at 40, 2 at 60, 0 from 80 up** (worst wrong 2.41× at 80, 2.21× at 100, 1.94× at 160). Fewer onsets than 100 is not measured |
+| **`ONSET_LAG = 0.31`** | Swept 0.24–0.39 over the 8 right pairs with a truth (the subtitle against the video's own track, cue-vs-cue): 0.31 minimises the WORST residual, **0.13 s**, inside §8's 0.15 (residuals −0.13 … +0.12). #4's 0.27 leaves ABEMA and One Piece at 0.16. ⚠ On a mask about half the onsets have no line, so `_refine`'s plateau can sit on a stray onset's spike anywhere inside `MR_TOL` — a property of B1's refine, measured on a synthetic fixture (0.30 s), not changed here |
+| **Decoded short of the container** | refused at > 3% (`MAX_SHORT_DECODE`). A real case: Probe F's Naruto 113 audio is 379 s of a 1,388 s episode. 🚨 **And decoded from container time ZERO** (`aresample=async=1:first_pts=0`): raw PCM keeps no timestamps, so audio that starts late (2.000 s read as 0.023 s) or has holes came out SHORT, every onset early by the delay — under 3%, constant, invisible to the band. Found by the B6 adversarial pass |
+| ⭐ **The text witness (required)** | 10 × 30 s windows, character-bigram CONTAINMENT of what was heard in what the subtitle says there (±3 s), `MATCH` 0.23, pass at ≥ ¾ of ≥ 4 scored windows, quiet / no-line windows unscored. Small model, Japanese: right windows **0.28–0.86** (ABEMA, Netflix, Hulu Shippuuden), wrong episodes read at the RIGHT pair's offset **≤ 0.13** — every right pair passes, every wrong one fails. 🚨 **It passes both broadcast cuts** (9/9): their words are right after the break. Timing is what refuses a cut |
+| ⛔ **What the witness cannot vouch for** | (1) **a subtitle in another language than the speech** — an English subtitle on Japanese audio shares no letters with it; the witness says *language*, not *"a different episode"* (a real case: OpenSubtitles' `sintel.en` is written in **Hebrew**). (2) **Speech in a script `MATCH` was not measured on** (`MEASURED_SCRIPTS = ("kana",)`): in the Latin alphabet a WRONG film (Tears of Steel) matched Sintel's English windows at 0.28–0.47 — over `MATCH`. Both are `unavailable`, so the pair is REFUSED |
+| **The witness's cost** | whisper.cpp on the CPU, its default decode, 4 threads (whisper's default), this desktop (Ryzen 9 3900X) under 40–60% load from other work: **small (`ggml-small-q5_1`, 190 MB) ~110–130 s an episode** + 7.5 s model load; **large-v3-q5_0 (1.08 GB) 684 s** (11.4 min) + 44 s load — the small model is the practical one, and it separates as cleanly. Only a pair whose timing already reached the accept band pays; cached per video. ⚠ A cheaper decode was measured and REJECTED: no timestamps + one segment cut it to 81 s by transcribing LESS (a window heard 19 characters of 145) |
+
+⛔ **A mask pair never votes in a cluster** (`clusters_for`): coherence is unmeasured on a mask, and mask offsets could carry a release group's cluster to quorum and lift a TEXT-TRACK pair — `--vad` would change verdicts on videos that have a track.
+
+⛔ **Still open (Sonic's):** a subtitle in another language than the audio (the common
+case outside Surasura) is always refused on a mask — timing alone at a higher bar, or a
+witness that compares a translation, would be new rulings; Chinese speech (`han`) is
+unmeasured; a cluster's coherence on a mask; split detection on a mask (ruling 3).
+
+
+### 🚨 5c — B6 PROVEN ON A SIMULATED SET WITH KNOWN ANSWERS (2026-11-15), ours against #4
+
+**Bocchi the Rock! 01–12** (SubsPlease, each remuxed WITHOUT its subtitle track — the case B6 is for), its `.ja.ass`
+as the truth (measured against the release's own track: every episode within ±0.02 s, none cut). **47 cases**, each
+with its answer known before either implementation ran: (a) 12 raw videos + their own subtitle; (b) 16 known offsets
+(±0.8, −3.2, +7.5, −12 s on four episodes); (c) 10 wrong episodes; (d) 4 cuts — 25, 39, 59 s removed mid-episode and
+the **OP removed** (68 s); (e) the audio stream starting **0.6 s and 2.5 s late**; (f) 4 minutes of silence;
+(g) the release's English track on Japanese audio. Both implementations through their own pipeline, the same models
+(small-q5_1 for both witnesses), and three cases each through the CLI — the same answers.
+
+| | right answer | **wrong file written** | right pair refused | offset 0.15–0.35 s off | median / worst error |
+| --- | --- | --- | --- | --- | --- |
+| #4 (19ee12c5) | 40 | **4** — both delays (+0.6 / +2.5 read as 0.00), the 25 s cut, the OP cut | 0 | 3 | 0.020 / 2.50 s |
+| ours as first built | 36 | 0 | **6** (ep 02 at 2.32×, ep 11 and its 4 shifts at 2.47–2.50×) | 5 | 0.035 / 0.21 s |
+| **ours, fixed** | **43** | **0** | **0** | 4 (all Bocchi 01, 0.17–0.19 s) | **0.020 / 0.19 s** |
+
+🚨 **What it found, and it is structural:** on a speech mask **a cut is invisible to timing.** A cut pair scores
+2.17–2.34× — inside the right pairs' 2.32–3.12× — and the bucket walk only asks a bucket about offsets within 15 s
+(`BUCKET_LOCAL_WINDOW`), while its 0.15 rate-gain bar is out of reach of a mask's 0.25–0.45 match rates: widening the
+window to 120 s, or running the split search as a detector, caught **none** of the cuts. The first build refused cuts
+only because its accept line (2.6) also refused correct pairs; #4's 2.2 accepted two of them.
+
+⭐ **The fix — the witness checks WHERE, not only WHAT:**
+
+| | |
+| --- | --- |
+| **The where-check** (`witness.ELSEWHERE_GAIN` 0.15, `ELSEWHERE_MATCH` 0.5, ±120 s) | per scored window, the containment at the timing's offset against the best at any other offset beyond the margin. Every window of 15 right pairs gained **≤ 0.10**; the cuts' off-stretch windows **0.21** (shincaps' 10 s CM break) to **0.74**, each fitting there at ≥ 0.54. One window that clearly fits elsewhere refuses the pair as a cut, and says by how much (26 s for the 24.9 s cut) |
+| **Windows at the first and last moments** (12, not 10) | a cut near either end shifts only a short stretch there |
+| **Lines outside the video** (`MAX_OUTSIDE_LINES` 2) | at the fitted offset, 0 lines land outside the video on every right pair (20); the OP-removed cut puts **5 lines (22 s of dialogue) before it starts** — the cold open, which no window can hear because it is not in the video |
+| **`MASK_BAND` (2.0, 2.2)** | cuts are now the witness's; the band only has to clear the measurable wrong pairs (≤ 1.92×). Bocchi 02 (2.32×) and 11 (2.47×) are accepted |
+| **`ONSET_LAG` 0.29** | swept over the 21 right pairs with a truth (Bocchi 12 + the corpus 9): 20 within 0.15 s. ⚠ **No lag gets all 21 inside:** the per-episode spread is ~0.33 s (Bocchi 01 wants −0.17 from the median, ABEMA / One Piece +0.16) |
+
+Also confirmed on real media: the **audio start delay** (0.6 / 2.5 s) found to within 0.05 s — #4 writes both off by
+the whole delay; 4 minutes of silence change nothing; the English track is refused as a language mismatch by both;
+every wrong episode refused by both. ⚠ #4's witness transcribed ~5× faster here because its loader registers the
+GPU (Vulkan) backend; ours registers only the CPU one (the crash-safety ruling of §5b) — ~2.5 min an episode, paid
+once per video, only for a pair whose timing passed.
+
 ---
 
 ## 6 — Cues that fall inside a removed stretch
