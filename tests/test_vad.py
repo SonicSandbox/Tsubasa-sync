@@ -123,17 +123,11 @@ def test_an_uncut_subtitle_lands_on_its_truth(yomi, reference, name):
     assert abs(got - truth) <= TRUTH_TOL, (got, truth)
 
 
-@pytest.mark.parametrize("name", [u"nanakoraws.atx.cut.srt",
-                                  u"shincaps.atx.cut.srt"])
-def test_a_broadcast_cut_is_refused_on_timing(yomi, reference, name):
-    u"""🚨 shincaps HOLDS THROUGHOUT on this segmenter (2.34x): only the band
-    refuses it. #4's accept line, 2.2, wrote it with its opening 3:42 out."""
-    fit = _timing(yomi, reference, name)
+def test_the_nanakoraws_cut_fails_a_bucket_on_timing(yomi, reference):
+    fit = _timing(yomi, reference, u"nanakoraws.atx.cut.srt")
     assert len(fit.segments) == 1
-    assert not V.mask_would_accept(fit), fit.excess
-    v = V.verdict(fit, reference_kind=V.SPEECH_MASK,
-                  witness=W.Witness(True, [], u""))
-    assert v.outcome == V.REFUSED
+    assert not fit.holds_throughout
+    assert not V.mask_would_accept(fit)
 
 
 def test_the_wrong_episode_is_refused_on_timing(yomi, reference):
@@ -185,6 +179,19 @@ def test_the_wrong_episode_is_refused_even_at_the_right_offset(yomi, reference,
     w = W.check(heard, _cues(os.path.join(yomi, u"wrong-episode.s01e15.srt")),
                 right.segments[0][1])
     assert w.available and not w.passed, w.summary()
+
+
+@pytest.mark.parametrize("name", [u"nanakoraws.atx.cut.srt",
+                                  u"shincaps.atx.cut.srt"])
+def test_a_broadcast_cut_is_refused(yomi, reference, heard, name):
+    u"""🚨 shincaps HOLDS THROUGHOUT on this segmenter (2.34x, over the accept
+    line): what refuses it is the witness -- its opening windows' words fit
+    the subtitle ten seconds from where the timing put it."""
+    fit = _timing(yomi, reference, name)
+    assert len(fit.segments) == 1
+    w = W.check(heard, _cues(os.path.join(yomi, name)), fit.segments[0][1])
+    v = V.verdict(fit, reference_kind=V.SPEECH_MASK, witness=w)
+    assert v.outcome == V.REFUSED, (fit.excess, w.summary())
 
 
 def test_an_english_subtitle_on_japanese_speech_says_it_is_the_language(

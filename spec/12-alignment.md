@@ -335,6 +335,45 @@ case outside Surasura) is always refused on a mask — timing alone at a higher 
 witness that compares a translation, would be new rulings; Chinese speech (`han`) is
 unmeasured; a cluster's coherence on a mask; split detection on a mask (ruling 3).
 
+
+### 🚨 5c — B6 PROVEN ON A SIMULATED SET WITH KNOWN ANSWERS (2026-11-15), ours against #4
+
+**Bocchi the Rock! 01–12** (SubsPlease, each remuxed WITHOUT its subtitle track — the case B6 is for), its `.ja.ass`
+as the truth (measured against the release's own track: every episode within ±0.02 s, none cut). **47 cases**, each
+with its answer known before either implementation ran: (a) 12 raw videos + their own subtitle; (b) 16 known offsets
+(±0.8, −3.2, +7.5, −12 s on four episodes); (c) 10 wrong episodes; (d) 4 cuts — 25, 39, 59 s removed mid-episode and
+the **OP removed** (68 s); (e) the audio stream starting **0.6 s and 2.5 s late**; (f) 4 minutes of silence;
+(g) the release's English track on Japanese audio. Both implementations through their own pipeline, the same models
+(small-q5_1 for both witnesses), and three cases each through the CLI — the same answers.
+
+| | right answer | **wrong file written** | right pair refused | offset 0.15–0.35 s off | median / worst error |
+| --- | --- | --- | --- | --- | --- |
+| #4 (19ee12c5) | 40 | **4** — both delays (+0.6 / +2.5 read as 0.00), the 25 s cut, the OP cut | 0 | 3 | 0.020 / 2.50 s |
+| ours as first built | 36 | 0 | **6** (ep 02 at 2.32×, ep 11 and its 4 shifts at 2.47–2.50×) | 5 | 0.035 / 0.21 s |
+| **ours, fixed** | **43** | **0** | **0** | 4 (all Bocchi 01, 0.17–0.19 s) | **0.020 / 0.19 s** |
+
+🚨 **What it found, and it is structural:** on a speech mask **a cut is invisible to timing.** A cut pair scores
+2.17–2.34× — inside the right pairs' 2.32–3.12× — and the bucket walk only asks a bucket about offsets within 15 s
+(`BUCKET_LOCAL_WINDOW`), while its 0.15 rate-gain bar is out of reach of a mask's 0.25–0.45 match rates: widening the
+window to 120 s, or running the split search as a detector, caught **none** of the cuts. The first build refused cuts
+only because its accept line (2.6) also refused correct pairs; #4's 2.2 accepted two of them.
+
+⭐ **The fix — the witness checks WHERE, not only WHAT:**
+
+| | |
+| --- | --- |
+| **The where-check** (`witness.ELSEWHERE_GAIN` 0.15, `ELSEWHERE_MATCH` 0.5, ±120 s) | per scored window, the containment at the timing's offset against the best at any other offset beyond the margin. Every window of 15 right pairs gained **≤ 0.10**; the cuts' off-stretch windows **0.21** (shincaps' 10 s CM break) to **0.74**, each fitting there at ≥ 0.54. One window that clearly fits elsewhere refuses the pair as a cut, and says by how much (26 s for the 24.9 s cut) |
+| **Windows at the first and last moments** (12, not 10) | a cut near either end shifts only a short stretch there |
+| **Lines outside the video** (`MAX_OUTSIDE_LINES` 2) | at the fitted offset, 0 lines land outside the video on every right pair (20); the OP-removed cut puts **5 lines (22 s of dialogue) before it starts** — the cold open, which no window can hear because it is not in the video |
+| **`MASK_BAND` (2.0, 2.2)** | cuts are now the witness's; the band only has to clear the measurable wrong pairs (≤ 1.92×). Bocchi 02 (2.32×) and 11 (2.47×) are accepted |
+| **`ONSET_LAG` 0.29** | swept over the 21 right pairs with a truth (Bocchi 12 + the corpus 9): 20 within 0.15 s. ⚠ **No lag gets all 21 inside:** the per-episode spread is ~0.33 s (Bocchi 01 wants −0.17 from the median, ABEMA / One Piece +0.16) |
+
+Also confirmed on real media: the **audio start delay** (0.6 / 2.5 s) found to within 0.05 s — #4 writes both off by
+the whole delay; 4 minutes of silence change nothing; the English track is refused as a language mismatch by both;
+every wrong episode refused by both. ⚠ #4's witness transcribed ~5× faster here because its loader registers the
+GPU (Vulkan) backend; ours registers only the CPU one (the crash-safety ruling of §5b) — ~2.5 min an episode, paid
+once per video, only for a pair whose timing passed.
+
 ---
 
 ## 6 — Cues that fall inside a removed stretch

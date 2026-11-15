@@ -92,25 +92,22 @@ SPEECH_MASK = u"speech mask"
 
 REFERENCE_KINDS = frozenset((TEXT_TRACK, BITMAP_TRACK, SPEECH_MASK))
 
-#: ⭐ FITTED AT B6 (2026-11-14), as `(refuse_below, accept_at)`, on Silero
-#: onsets from whisper.cpp's ggml Silero (`speech.py`) against real subtitles
-#: with negative controls -- `12-alignment.md` §5b, the Yomi set + Probe F's
-#: material, ONE offset, `MIN_MASK_ONSETS` met:
+#: ⭐ FITTED AT B6, as `(refuse_below, accept_at)`, on Silero onsets from
+#: whisper.cpp's ggml Silero (`speech.py`) against real subtitles with negative
+#: controls, ONE offset, `MIN_MASK_ONSETS` met (`12-alignment.md` §5b-5c):
 #:
-#:     right pairs (8 here + 20 in Tsubasa-sync #4)      2.71-4.75x
-#:     🚨 a real broadcast CUT that holds throughout     2.34x  (shincaps)
+#:     right pairs (Bocchi 12, the corpus 8, #4's 20)    2.32-4.75x
+#:     broadcast / simulated CUTS                        2.17-2.34x
 #:     wrong episodes and controls, measurable           <= 1.92x
 #:
-#: ⛔ `accept_at` sits ABOVE THE CUT. #4 fitted 2.2 on its five shows, which
-#: would accept the shincaps AT-X file -- its opening 3:42 ten seconds out --
-#: because on this segmenter its bucket walk passes. Between the cut (2.34)
-#: and the lowest right pair (2.71), 2.6.
-#:
-#: 🚨 TIMING IS NOT ENOUGH ON ITS OWN HERE: a speech-mask pair is CONFIDENT
-#: only when the TEXT WITNESS also passes (`witness.py`), because these bands
-#: rest on a few dozen pairs from eight shows.
+#: 🚨 A CUT SCORES INSIDE THE RIGHT PAIRS' RANGE, so timing cannot be what
+#: refuses one: 0.1.13's first line, 2.6, refused the cuts AND Bocchi 02 and
+#: 11 -- correct subtitles lost. A cut is refused by the witness's where-check
+#: (its words fit another offset) and by `witness.outside` (lines before the
+#: video starts); the band only has to clear the wrong pairs, with room.
+#: ⭐ A speech-mask pair is CONFIDENT only when the TEXT WITNESS also passes.
 #: ⚠ `MaskBandNotFitted` is kept for a caller that sets this back to None.
-MASK_BAND = (2.0, 2.6)
+MASK_BAND = (2.0, 2.2)
 
 #: A bitmap track's ON-times are cue moments like any other -- the container
 #: block timestamps that produced them know nothing about the codec -- so the

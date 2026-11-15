@@ -416,12 +416,22 @@ def test_a_coherent_cluster_lifts_nothing_on_a_mask():
     assert v.outcome == V.REFUSED
 
 
-def test_the_mask_band_refuses_the_measured_broadcast_cut():
-    u"""🚨 `12-alignment.md` §5b: the shincaps AT-X cut holds throughout on
-    this segmenter at 2.34x. Every right pair measured >= 2.71x."""
+def test_the_mask_band_sits_between_the_measured_wrong_and_right_pairs():
+    u"""🚨 `12-alignment.md` §5c (the Bocchi set): right pairs measured down to
+    2.32x (ep 02) and 2.47x (ep 11), every measurable wrong one <= 1.92x. A cut
+    scores 2.17-2.34x -- inside the right pairs' range, so timing CANNOT be what
+    refuses a cut; the witness's where-check and the outside-lines rule are."""
     refuse_below, accept_at = V.MASK_BAND
-    assert 2.34 < accept_at <= 2.71
-    assert 1.92 < refuse_below < accept_at
+    assert 1.92 < accept_at <= 2.32
+    assert 1.92 < refuse_below <= accept_at
+
+
+def test_a_right_pair_at_2_3x_is_confident_when_the_witness_agrees():
+    u"""Bocchi ep 02 measured 2.32x: refused at 0.1.13's first accept line
+    (2.6), a correct subtitle lost."""
+    v = V.verdict(make_fit(excess=2.3), reference_kind=V.SPEECH_MASK,
+                  witness=W.Witness(True, [], u""))
+    assert v.outcome == V.CONFIDENT
 
 
 # ===========================================================================
@@ -461,12 +471,16 @@ def _cue(t, text):
     return CUES.Cue(t, t + 1.5, text)
 
 
-def test_windows_cover_the_runtime_evenly_and_never_start_before_zero():
+def test_windows_cover_the_runtime_from_its_first_to_its_last_moment():
+    u"""⭐ A window at 0 s and one ending at the end: a cut near either end
+    shifts only a short stretch there, which mid-runtime windows never see."""
     starts = W.windows(1420.0)
-    assert len(starts) == W.WINDOWS
-    assert starts[0] >= 0.0 and starts[-1] + W.WINDOW_S <= 1420.0
-    assert starts == sorted(starts)
+    assert len(starts) == W.WINDOWS + 2
+    assert starts[0] == 0.0
+    assert abs(starts[-1] + W.WINDOW_S - 1420.0) < 1e-9
+    assert starts == sorted(starts) and len(set(starts)) == len(starts)
     assert W.windows(0) == [] and W.windows(None) == []
+    assert W.windows(20.0) == [0.0], "a video shorter than one window"
 
 
 def test_normalise_drops_markup_and_folds_full_width():
@@ -546,6 +560,56 @@ def test_japanese_speech_with_a_hebrew_subtitle_says_language_not_episode():
                                   u"להתראות"])
     assert not got.available
     assert u"Hebrew" in got.reason and u"own language" in got.reason
+
+
+def _cut_at(t_cut, removed, n=None):
+    u"""A subtitle from a version WITH `removed` seconds more after `t_cut`:
+    in this video's time its later lines sit `removed` s late."""
+    return [_cue(t + (removed if t >= t_cut else 0.0), ln)
+            for t, ln in zip(VIDEO_STARTS, LINES)]
+
+
+def test_words_that_fit_ANOTHER_offset_are_a_cut_even_when_they_half_match():
+    u"""🚨 The Bocchi set (`12-alignment.md` §5c): 25 s removed at 15:00, the
+    windows after it still matched 0.34-0.43 at the timing's offset -- over
+    MATCH -- and #4 wrote it CONFIDENT. Their words fit 25 s away at 0.67-0.86.
+    A window that clearly fits elsewhere is a cut, whatever it scores here."""
+    heard = _heard()(None, RUNTIME)
+    got = W.check(heard, _cut_at(900.0, 25.0), 0.0)
+    assert not got.passed
+    assert u"cut" in got.reason and u"from where the timing put it" in got.reason
+
+
+def test_the_where_check_sits_between_right_windows_and_the_smallest_cut():
+    u"""🚨 `12-alignment.md` §5c, every window of 15 right pairs gained at most
+    0.10 elsewhere; the weakest real cut (shincaps, a 10 s CM break) 0.21, and
+    every cut window fit elsewhere at >= 0.54. The synthetic cut above gains
+    ~1.0, so this is what holds the thresholds where the measurement put them."""
+    assert 0.10 < W.ELSEWHERE_GAIN <= 0.21
+    assert W.MATCH < W.ELSEWHERE_MATCH <= 0.54
+
+
+def test_a_right_pair_has_no_window_that_fits_elsewhere():
+    u"""The control: the same windows and lines, no cut."""
+    heard = _heard()(None, RUNTIME)
+    got = W.check(heard, [_cue(t, ln) for t, ln in zip(VIDEO_STARTS, LINES)],
+                  0.0)
+    assert got.passed, got.reason
+
+
+def test_lines_that_land_outside_the_video_refuse_the_pair(episode, tmp_path):
+    u"""🚨 The Bocchi set: the OP removed. Timing takes the post-OP offset
+    (-68 s) and the cold open's five lines land BEFORE the video starts --
+    lines the video does not have. No witness window can hear them there."""
+    late = 30.0
+    starts = [t + late for t in VIDEO_STARTS]
+    extra = [1.0, 5.0, 9.0, 13.0, 17.0]
+    sub = _write(tmp_path / u"Show S01E18 (BD).ja.srt",
+                 _srt(extra + starts, OTHER_LINES[:5] + LINES))
+    r = _sync(episode, FakeSpeech(), subtitle=sub)[0]
+    assert abs(r.segments[0][1] + late) <= MR_TOL, r.segments
+    assert r.outcome == V.REFUSED
+    assert u"before the video starts" in r.reason
 
 
 def test_an_unavailable_witness_never_reads_as_passed():

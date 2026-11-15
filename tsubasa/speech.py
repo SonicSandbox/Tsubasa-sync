@@ -60,13 +60,16 @@ DECODE_RECIPE = u"s16le/16000/mono/aresample-async1-first_pts0"
 #: 🚨 Seconds a Silero ONSET trails the subtitle line it belongs to: captions
 #: appear as speech starts or a little before, and Silero marks the first
 #: voiced frame. Subtracted from every onset, so a fit against the corrected
-#: reference reads the subtitle's own offset. ⭐ RE-MEASURED on this project's
-#: corpus (`12-alignment.md` §5b): 8 right pairs whose truth is known (Yomi
-#: 15/18/20 + ABEMA + Netflix, Gintama 201, One Piece 1121, 86 03), through
-#: the real aligner, swept 0.24-0.39 s: 0.31 is the lag whose WORST residual
-#: is smallest, 0.13 s -- inside §8's 0.15. #4's 0.27 (its own 9 episodes)
-#: leaves ABEMA and One Piece at 0.16 here.
-ONSET_LAG = 0.31
+#: reference reads the subtitle's own offset. ⭐ RE-MEASURED twice
+#: (`12-alignment.md` §5b-5c), through the real aligner, over 21 right pairs
+#: whose truth is known -- Bocchi the Rock! 01-12 (the .ja.ass against the
+#: release's own track) + Yomi 15/18/20, ABEMA, Netflix, Gintama 201, One
+#: Piece 1121, 86 03 -- swept 0.22-0.36 s: at 0.29, 20 of 21 land within
+#: §8's 0.15 s, the median -0.015 s, the worst 0.19 (Bocchi 01). ⚠ No lag
+#: brings every pair inside 0.15: the per-episode spread is ~0.33 s wide
+#: (Bocchi 01 wants -0.17 from the median, ABEMA / One Piece +0.16). #4's
+#: 0.27 (its own 9 episodes): 18 of 21, worst 0.17.
+ONSET_LAG = 0.29
 
 #: ⛔ RUNBOOK B6: refuse when the decoded audio is short of the container's
 #: duration by more than this. A truncated decode makes a reference that ends

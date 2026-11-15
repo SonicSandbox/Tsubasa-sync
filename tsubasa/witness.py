@@ -32,6 +32,7 @@ scripts the witness is `unavailable` and says why.
 `speech` heard and what the subtitle says, so the suite drives every rule
 without media.
 """
+import bisect
 import re
 import unicodedata
 
@@ -70,18 +71,64 @@ MIN_SCORED = 4
 #: guess.
 MEASURED_SCRIPTS = (u"kana",)
 
+#: 🚨 THE WHERE-CHECK. A scored window whose words fit the subtitle at least
+#: this much better at ANOTHER offset (within `SEARCH_S`, beyond `MARGIN_S`)
+#: than at the timing's is a cut: a stretch of this video wants a different
+#: offset. Measured (`12-alignment.md` §5c), containment gain over the
+#: timing's offset, every window of 15 right pairs: at most 0.10; the cuts'
+#: off-stretch windows 0.21 (a 10 s CM break) to 0.74. ⭐ Timing cannot do
+#: this on a mask: its bucket walk only asks about offsets within 15 s, and
+#: a cut scores 2.17-2.34x -- inside the right pairs' range.
+ELSEWHERE_GAIN = 0.15
+#: ...and the fit elsewhere must itself be a real match, not a scrap of shared
+#: words: every cut window above fit elsewhere at 0.54-0.87, and a window that
+#: matches nothing here (a mis-heard shout) must not be called a cut because
+#: a quarter of its bigrams turn up a minute away.
+ELSEWHERE_MATCH = 0.5
+SEARCH_S = 120.0
+SEARCH_STEP_S = 0.5
+
+#: ⛔ A pair whose fitted offset puts this many of its lines wholly before the
+#: video starts (or after it ends) has a stretch the video does not -- an
+#: opening, a scene removed. Measured: 0 lines on every right pair (20), 5
+#: (22 s of dialogue) with Bocchi 02's OP removed -- a stretch no witness
+#: window can hear, because it is not in the video at all.
+MAX_OUTSIDE_LINES = 2
+
 QUIET, NO_SUB = u"quiet", u"no-sub"
 
 _TAG = re.compile(u"\\{[^}]*\\}|\\\\[Nnh]|<[^>]*>")
 
 
 def windows(duration):
-    u"""Window START times for a video of `duration` seconds. -> [float]"""
+    u"""Window START times for a video of `duration` seconds. -> [float]
+
+    `WINDOWS` spread over the runtime, plus one at 0 s and one ending at the
+    end: a cut near either end moves only a short stretch there, which the
+    spread windows never land in."""
     duration = float(duration or 0.0)
     if duration <= 0:
         return []
-    return [max(0.0, duration * (i + 0.5) / WINDOWS - WINDOW_S / 2.0)
-            for i in range(WINDOWS)]
+    if duration <= WINDOW_S:
+        return [0.0]
+    spread = [max(0.0, duration * (i + 0.5) / WINDOWS - WINDOW_S / 2.0)
+              for i in range(WINDOWS)]
+    return sorted(set([0.0] + spread + [duration - WINDOW_S]))
+
+
+def outside(cues, offset, duration):
+    u"""The refusal when too many lines land outside the video, or None."""
+    before = [c for c in cues if c.end + offset <= 0.0]
+    after = [c for c in cues if duration and c.start + offset >= duration]
+    if len(before) + len(after) <= MAX_OUTSIDE_LINES:
+        return None
+    where = (u"before the video starts" if len(before) >= len(after)
+             else u"after the video ends")
+    many = before if len(before) >= len(after) else after
+    return (u"at the offset the timing found, %d of its lines (%.0f s of "
+            u"dialogue) land %s: this subtitle has a stretch the video does "
+            u"not -- an opening or a scene removed, a different edit"
+            % (len(many), sum(c.end - c.start for c in many), where))
 
 
 def normalise(text):
@@ -199,7 +246,9 @@ def check(heard, cues, offset):
                                                          heard_script),
                            _SCRIPT_WORDS.get(written_script, written_script)))
 
-    lines = [(c.start + offset, normalise(c.text)) for c in cues]
+    # ⚠ Sorted: an .ass need not list its lines in time order, and the
+    # where-check below walks them by time.
+    lines = sorted((c.start + offset, normalise(c.text)) for c in cues)
     rows = []
     for start, text in heard:
         said = normalise(text)
@@ -213,6 +262,21 @@ def check(heard, cues, offset):
             rows.append((start, containment(said, written)))
 
     scored = [(t, v) for t, v in rows if not isinstance(v, str)]
+    # 🚨 WHERE, not only WHAT: a window whose words fit clearly better at
+    # another offset is a stretch that wants that offset -- a cut. Checked
+    # before the share, because it is positive evidence, not a miss.
+    said_of = dict((s, normalise(t)) for s, t in heard)
+    for start, here in scored:
+        shift, there = _elsewhere(said_of[start], lines, start)
+        if (shift is not None and there >= ELSEWHERE_MATCH
+                and there - here >= ELSEWHERE_GAIN):
+            return Witness(False, rows, (
+                u"the words at %s fit the subtitle about %d s from where the "
+                u"timing put it (%d%% there, %d%% here): a cut, or a "
+                u"different edit of this episode -- a stretch of this video "
+                u"wants another offset"
+                % (_clock(start), int(round(abs(shift))), int(round(there * 100)),
+                   int(round(here * 100)))))
     misses = [(t, v) for t, v in scored if v < MATCH]
     where = u", ".join(u"%s (%d%%)" % (_clock(t), int(round(v * 100)))
                        for t, v in misses[:4])
@@ -232,6 +296,35 @@ def check(heard, cues, offset):
     # stretch where the subtitle drifts look the same from one window.
     return Witness(True, rows, (u"did not match at %s" % where) if misses
                    else u"")
+
+
+def _elsewhere(said, lines, start):
+    u"""The best fit of a window's words at an offset AWAY from the timing's.
+    -> (shift s, containment) -- the shift is the centre of the best plateau
+    -- or (None, 0.0). Only shifts beyond `MARGIN_S`: nearer ones are the
+    same lines the window already reads."""
+    times = [at for at, _t in lines]
+    lo, hi = start - MARGIN_S, start + WINDOW_S + MARGIN_S
+    best, at_best = 0.0, []
+    n = int(round(SEARCH_S / SEARCH_STEP_S))
+    for k in range(-n, n + 1):
+        d = k * SEARCH_STEP_S
+        if abs(d) <= MARGIN_S:
+            continue
+        i, j = bisect.bisect_left(times, lo + d), bisect.bisect_right(times, hi + d)
+        written = u"".join(t for _at, t in lines[i:j])
+        if len(written) < NO_SUB_CHARS:
+            continue
+        v = containment(said, written)
+        if v > best + 1e-9:
+            best, at_best = v, [d]
+        elif abs(v - best) <= 1e-9:
+            at_best.append(d)
+    if not at_best:
+        return None, 0.0
+    # ⭐ The lines that fit sit `d` s AFTER this window, so this stretch wants
+    # the subtitle moved by -d: reported as that move, at the plateau's centre.
+    return -(at_best[0] + at_best[-1]) / 2.0, best
 
 
 _SCRIPT_WORDS = {u"kana": u"Japanese", u"han": u"Chinese characters",

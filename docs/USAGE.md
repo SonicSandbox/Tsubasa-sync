@@ -176,12 +176,14 @@ best of several rejected candidates.
 Off by default. With `--vad` (`sync(..., vad=True)`), a video that has no subtitle track to
 align against is timed against the **speech in its own audio** instead of being refused:
 
-- **Timing** — where speech starts, from Silero VAD. **One offset only**: a subtitle from a
-  broadcast with a cut in it is refused, never split.
-- **A text check, required** — ten short stretches of the audio are transcribed and must
-  say what the subtitle says there. A pair is CONFIDENT only when both agree, and its word
-  is at most `fair`. Measured on Japanese speech so far; a subtitle in another language
-  than the audio cannot be checked this way, and is refused saying so.
+- **Timing** — where speech starts, from Silero VAD. **One offset only**: a subtitle for a
+  different edit (a broadcast cut, an opening or a scene removed) is refused, never split.
+- **A text check, required** — twelve short stretches of the audio, the first and last
+  moments included, are transcribed and must say what the subtitle says **there**: words that
+  fit the subtitle at another offset mean a cut, and the pair is refused. A pair is
+  CONFIDENT only when both agree, and its word is at most `fair`. Measured on Japanese
+  speech so far; a subtitle in another language than the audio cannot be checked this way,
+  and is refused saying so.
 - **What it needs** — whisper.cpp 1.8.4 and two of its models, **found, never downloaded**:
   `TSUBASA_WHISPER` (the folder holding `whisper.dll` / `libwhisper`), `TSUBASA_VAD_MODEL`
   (`ggml-silero-*.bin`) and `TSUBASA_ASR_MODEL` (a `ggml-*.bin` whisper model), or

@@ -972,6 +972,11 @@ def _witness_for(reference, cues, fit):
     """
     if not _verdict.mask_would_accept(fit):
         return None
+    # ⛔ Lines the video does not have: checked BEFORE any transcription, and
+    # a refusal no witness window could reach (`witness.outside`).
+    why = _witness.outside(cues, fit.segments[0][1], reference.duration)
+    if why:
+        return _witness.Witness(False, [], why)
     if reference.hearing is None:
         return _witness.Witness.unavailable(
             u"this reference carries no audio to transcribe")
